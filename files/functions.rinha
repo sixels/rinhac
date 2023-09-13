@@ -1,0 +1,9 @@
+let foo = fn (a, b, c) => {
+    bar(a)
+};
+
+let bar = fn (n) => {
+    1
+};
+
+foo(1+2,"3", true)

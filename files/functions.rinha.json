@@ -1,0 +1,185 @@
+{
+  "name": "./files/functions.rinha",
+  "expression": {
+    "kind": "Let",
+    "name": {
+      "text": "foo",
+      "location": {
+        "start": 4,
+        "end": 7,
+        "filename": "./files/functions.rinha"
+      }
+    },
+    "value": {
+      "kind": "Function",
+      "parameters": [
+        {
+          "text": "a",
+          "location": {
+            "start": 14,
+            "end": 15,
+            "filename": "./files/functions.rinha"
+          }
+        },
+        {
+          "text": "b",
+          "location": {
+            "start": 17,
+            "end": 18,
+            "filename": "./files/functions.rinha"
+          }
+        },
+        {
+          "text": "c",
+          "location": {
+            "start": 20,
+            "end": 21,
+            "filename": "./files/functions.rinha"
+          }
+        }
+      ],
+      "value": {
+        "kind": "Call",
+        "callee": {
+          "kind": "Var",
+          "text": "bar",
+          "location": {
+            "start": 32,
+            "end": 35,
+            "filename": "./files/functions.rinha"
+          }
+        },
+        "arguments": [
+          {
+            "kind": "Var",
+            "text": "a",
+            "location": {
+              "start": 36,
+              "end": 37,
+              "filename": "./files/functions.rinha"
+            }
+          }
+        ],
+        "location": {
+          "start": 32,
+          "end": 38,
+          "filename": "./files/functions.rinha"
+        }
+      },
+      "location": {
+        "start": 10,
+        "end": 40,
+        "filename": "./files/functions.rinha"
+      }
+    },
+    "next": {
+      "kind": "Let",
+      "name": {
+        "text": "bar",
+        "location": {
+          "start": 47,
+          "end": 50,
+          "filename": "./files/functions.rinha"
+        }
+      },
+      "value": {
+        "kind": "Function",
+        "parameters": [
+          {
+            "text": "n",
+            "location": {
+              "start": 57,
+              "end": 58,
+              "filename": "./files/functions.rinha"
+            }
+          }
+        ],
+        "value": {
+          "kind": "Int",
+          "value": 1,
+          "location": {
+            "start": 69,
+            "end": 70,
+            "filename": "./files/functions.rinha"
+          }
+        },
+        "location": {
+          "start": 53,
+          "end": 72,
+          "filename": "./files/functions.rinha"
+        }
+      },
+      "next": {
+        "kind": "Call",
+        "callee": {
+          "kind": "Var",
+          "text": "foo",
+          "location": {
+            "start": 75,
+            "end": 78,
+            "filename": "./files/functions.rinha"
+          }
+        },
+        "arguments": [
+          {
+            "kind": "Binary",
+            "lhs": {
+              "kind": "Int",
+              "value": 1,
+              "location": {
+                "start": 79,
+                "end": 80,
+                "filename": "./files/functions.rinha"
+              }
+            },
+            "op": "Add",
+            "rhs": {
+              "kind": "Int",
+              "value": 2,
+              "location": {
+                "start": 81,
+                "end": 82,
+                "filename": "./files/functions.rinha"
+              }
+            },
+            "location": {
+              "start": 79,
+              "end": 82,
+              "filename": "./files/functions.rinha"
+            }
+          },
+          {
+            "kind": "Str",
+            "value": "3",
+            "location": {
+              "start": 83,
+              "end": 86,
+              "filename": "./files/functions.rinha"
+            }
+          },
+          {
+            "kind": "Bool",
+            "value": true,
+            "location": {
+              "start": 88,
+              "end": 92,
+              "filename": "./files/functions.rinha"
+            }
+          }
+        ],
+        "location": {
+          "start": 75,
+          "end": 93,
+          "filename": "./files/functions.rinha"
+        }
+      },
+      "location": {
+        "start": 43,
+        "end": 93,
+        "filename": "./files/functions.rinha"
+      }
+    },
+    "location": { "start": 0, "end": 93, "filename": "./files/functions.rinha" }
+  },
+  "location": { "start": 0, "end": 93, "filename": "./files/functions.rinha" }
+}
