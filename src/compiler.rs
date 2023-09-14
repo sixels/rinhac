@@ -49,7 +49,7 @@ impl Rinhac {
 
         let print_int_type = context
             .i32_type()
-            .fn_type(&[context.i8_type().into()], false);
+            .fn_type(&[context.i32_type().into()], false);
         let print_int_prototype = module.add_function(
             RTFunction::PrintInt.into(),
             print_int_type,
@@ -120,10 +120,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             .position_at_end(self.entry_function.get_last_basic_block().unwrap());
         self.builder.build_return(None);
 
-        if !self.entry_function.verify(false) {
+        if !self.entry_function.verify(true) {
             // todo: error handling
-            self.entry_function.print_to_stderr();
-            panic!("compilation error: invalid entry-block code");
+            // self.entry_function.print_to_stderr();
+            panic!("compilation failed: invalid entry-block code");
         }
 
         Target::initialize_all(&InitializationConfig::default());
