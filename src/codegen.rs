@@ -1,3 +1,5 @@
+use std::vec;
+
 use inkwell::values::{
     BasicMetadataValueEnum, CallSiteValue, FunctionValue, GlobalValue, IntValue,
 };
@@ -16,6 +18,16 @@ impl Codegen for ast::Int {
     type R<'ctx> = IntValue<'ctx>;
     fn codegen<'a, 'ctx>(&self, compiler: &'a Compiler<'a, 'ctx>) -> Self::R<'ctx> {
         compiler.context.i32_type().const_int(self.value as _, true)
+    }
+}
+
+impl Codegen for ast::Bool {
+    type R<'ctx> = IntValue<'ctx>;
+    fn codegen<'a, 'ctx>(&self, compiler: &'a Compiler<'a, 'ctx>) -> Self::R<'ctx> {
+        compiler
+            .context
+            .bool_type()
+            .const_int(self.value as _, false)
     }
 }
 
@@ -57,7 +69,11 @@ impl Codegen for ast::Print {
                 ),
                 ast::Term::Int(i) => (
                     vec![i.codegen(compiler).into()],
-                    &compiler.prelude_functions[RTFunction::PrintStr],
+                    &compiler.prelude_functions[RTFunction::PrintInt],
+                ),
+                ast::Term::Bool(i) => (
+                    vec![i.codegen(compiler).into()],
+                    &compiler.prelude_functions[RTFunction::PrintBool],
                 ),
                 _ => unimplemented!(),
             };
