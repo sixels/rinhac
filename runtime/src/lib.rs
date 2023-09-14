@@ -11,6 +11,6 @@ extern "C" fn __rinha_rt_print_int(value: i32) {
 }
 
 #[no_mangle]
-extern "C" fn __rinha_rt_print_boolean(value: bool) {
+extern "C" fn __rinha_rt_print_bool(value: bool) {
     println!("{value}");
 }
