@@ -2,7 +2,10 @@ use inkwell::values::{
     BasicMetadataValueEnum, CallSiteValue, FunctionValue, GlobalValue, IntValue,
 };
 
-use crate::{ast, compiler::Compiler};
+use crate::{
+    ast,
+    compiler::{Compiler, RTFunction},
+};
 
 pub trait Codegen {
     type R<'ctx>;
@@ -50,11 +53,11 @@ impl Codegen for ast::Print {
                         let (string, len) = s.codegen(compiler);
                         vec![string.as_pointer_value().into(), len.into()]
                     },
-                    compiler.prelude_functions.get("print_str").unwrap(),
+                    &compiler.prelude_functions[RTFunction::PrintStr],
                 ),
                 ast::Term::Int(i) => (
                     vec![i.codegen(compiler).into()],
-                    compiler.prelude_functions.get("print_int").unwrap(),
+                    &compiler.prelude_functions[RTFunction::PrintStr],
                 ),
                 _ => unimplemented!(),
             };

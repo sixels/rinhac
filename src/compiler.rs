@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::Path};
 
+use enum_map::{Enum, EnumMap};
 use inkwell::{
     builder::Builder,
     context::Context,
@@ -32,31 +33,43 @@ impl Rinhac {
     pub fn define_prelude_functions<'ctx>(
         context: &'ctx Context,
         module: &Module<'ctx>,
-    ) -> HashMap<&'static str, FunctionValue<'ctx>> {
-        let mut prelude = HashMap::new();
-
+    ) -> EnumMap<RTFunction, FunctionValue<'ctx>> {
         let print_str_type = context.i32_type().fn_type(
-            &[context.i8_type().ptr_type(AddressSpace::from(0)).into()],
+            &[
+                context.i8_type().ptr_type(AddressSpace::from(0)).into(),
+                context.i32_type().into(),
+            ],
             false,
         );
         let print_str_prototype = module.add_function(
-            "__rinha_rt_print_str",
+            RTFunction::PrintStr.into(),
             print_str_type,
             Some(Linkage::External),
         );
-        prelude.insert("print_str", print_str_prototype);
 
         let print_int_type = context
             .i32_type()
             .fn_type(&[context.i8_type().into()], false);
         let print_int_prototype = module.add_function(
-            "__rinha_rt_print_int",
+            RTFunction::PrintInt.into(),
             print_int_type,
             Some(Linkage::External),
         );
-        prelude.insert("print_int", print_int_prototype);
 
-        prelude
+        let print_bool_type = context
+            .i32_type()
+            .fn_type(&[context.bool_type().into()], false);
+        let print_bool_prototype = module.add_function(
+            RTFunction::PrintBool.into(),
+            print_bool_type,
+            Some(Linkage::External),
+        );
+
+        enum_map::enum_map! {
+            RTFunction::PrintStr => print_str_prototype,
+            RTFunction::PrintInt => print_int_prototype,
+            RTFunction::PrintBool => print_bool_prototype,
+        }
     }
 }
 
@@ -66,7 +79,7 @@ pub struct Compiler<'a, 'ctx> {
     pub builder: Builder<'ctx>,
     pub entry_function: FunctionValue<'ctx>,
     pub function: Option<FunctionValue<'ctx>>,
-    pub prelude_functions: HashMap<&'static str, FunctionValue<'ctx>>,
+    pub prelude_functions: EnumMap<RTFunction, FunctionValue<'ctx>>,
     pub strings: HashMap<String, GlobalValue<'ctx>>,
 }
 
@@ -74,7 +87,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     pub fn new(
         context: &'ctx Context,
         module: &'a Module<'ctx>,
-        prelude_functions: HashMap<&'static str, FunctionValue<'ctx>>,
+        prelude_functions: EnumMap<RTFunction, FunctionValue<'ctx>>,
     ) -> Self {
         let builder = context.create_builder();
 
@@ -107,7 +120,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             .position_at_end(self.entry_function.get_last_basic_block().unwrap());
         self.builder.build_return(None);
 
-        self.entry_function.verify(true);
+        if !self.entry_function.verify(false) {
+            // todo: error handling
+            self.entry_function.print_to_stderr();
+            panic!("compilation error: invalid entry-block code");
+        }
 
         Target::initialize_all(&InitializationConfig::default());
 
@@ -128,5 +145,22 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Path::new("output.o"),
         )
         .unwrap();
+    }
+}
+
+#[derive(Debug, Enum)]
+pub enum RTFunction {
+    PrintStr,
+    PrintInt,
+    PrintBool,
+}
+
+impl From<RTFunction> for &'static str {
+    fn from(rt: RTFunction) -> Self {
+        match rt {
+            RTFunction::PrintStr => "__rinha_rt_print_str",
+            RTFunction::PrintInt => "__rinha_rt_print_int",
+            RTFunction::PrintBool => "__rinha_rt_print_bool",
+        }
     }
 }
