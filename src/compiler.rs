@@ -4,8 +4,8 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::{Linkage, Module},
-    targets::{InitializationConfig, Target, TargetMachine, TargetTriple},
-    values::{AnyValue, AnyValueEnum, FunctionValue, GlobalValue},
+    targets::{InitializationConfig, Target, TargetTriple},
+    values::{FunctionValue, GlobalValue},
     AddressSpace,
 };
 
@@ -100,25 +100,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             ast::Term::Print(print) => print.codegen(self),
             _ => todo!(),
         };
-
-        // let value = self.get_value(term);
-        // if let AnyValueEnum::FunctionValue(a) = value {
-        //     a.get_last_basic_block()
-        // }
-    }
-
-    pub fn get_value(&self, term: &ast::Term) -> AnyValueEnum<'ctx> {
-        match term {
-            ast::Term::Int(int) => int.codegen(self).as_any_value_enum(),
-            ast::Term::Str(str) => str.codegen(self).as_any_value_enum(),
-            _ => todo!(),
-            // ast::Term::Var(var) => self.compile_var(var),
-            // ast::Term::Fn(fn) => self.compile_fn(fn),
-            // ast::Term::Call(call) => self.compile_call(call),
-            // ast::Term::If(if_) => self.compile_if(if_),
-            // ast::Term::Let(let_) => self.compile_let(let_),
-            // ast::Term::Block(block) => self.compile_block(block),
-        }
     }
 
     pub fn finalize(&self) {
