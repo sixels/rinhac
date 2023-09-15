@@ -22,18 +22,18 @@ impl Rinhac {
         let triple = TargetTriple::create(current_platform::CURRENT_PLATFORM);
         module.set_triple(&triple);
 
-        let prelude = Self::define_prelude_functions(&context, &module);
-        let compiler = Compiler::new(&context, &module, prelude);
+        let core = Self::define_core_functions(&context, &module);
+        let compiler = Compiler::new(&context, &module, core);
         compiler.compile(&ast.expression);
         compiler.finalize();
 
         println!("GENERATED IR:\n{}", module.print_to_string().to_string(),)
     }
 
-    pub fn define_prelude_functions<'ctx>(
+    pub fn define_core_functions<'ctx>(
         context: &'ctx Context,
         module: &Module<'ctx>,
-    ) -> EnumMap<RTFunction, FunctionValue<'ctx>> {
+    ) -> EnumMap<CoreFunction, FunctionValue<'ctx>> {
         let print_str_type = context.i32_type().fn_type(
             &[
                 context.i8_type().ptr_type(AddressSpace::from(0)).into(),
@@ -42,7 +42,7 @@ impl Rinhac {
             false,
         );
         let print_str_prototype = module.add_function(
-            RTFunction::PrintStr.into(),
+            CoreFunction::PrintStr.into(),
             print_str_type,
             Some(Linkage::External),
         );
@@ -51,7 +51,7 @@ impl Rinhac {
             .i32_type()
             .fn_type(&[context.i32_type().into()], false);
         let print_int_prototype = module.add_function(
-            RTFunction::PrintInt.into(),
+            CoreFunction::PrintInt.into(),
             print_int_type,
             Some(Linkage::External),
         );
@@ -60,15 +60,15 @@ impl Rinhac {
             .i32_type()
             .fn_type(&[context.bool_type().into()], false);
         let print_bool_prototype = module.add_function(
-            RTFunction::PrintBool.into(),
+            CoreFunction::PrintBool.into(),
             print_bool_type,
             Some(Linkage::External),
         );
 
         enum_map::enum_map! {
-            RTFunction::PrintStr => print_str_prototype,
-            RTFunction::PrintInt => print_int_prototype,
-            RTFunction::PrintBool => print_bool_prototype,
+            CoreFunction::PrintStr => print_str_prototype,
+            CoreFunction::PrintInt => print_int_prototype,
+            CoreFunction::PrintBool => print_bool_prototype,
         }
     }
 }
@@ -79,7 +79,7 @@ pub struct Compiler<'a, 'ctx> {
     pub builder: Builder<'ctx>,
     pub entry_function: FunctionValue<'ctx>,
     pub function: Option<FunctionValue<'ctx>>,
-    pub prelude_functions: EnumMap<RTFunction, FunctionValue<'ctx>>,
+    pub core_functions: EnumMap<CoreFunction, FunctionValue<'ctx>>,
     pub strings: HashMap<String, GlobalValue<'ctx>>,
 }
 
@@ -87,7 +87,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     pub fn new(
         context: &'ctx Context,
         module: &'a Module<'ctx>,
-        prelude_functions: EnumMap<RTFunction, FunctionValue<'ctx>>,
+        core_functions: EnumMap<CoreFunction, FunctionValue<'ctx>>,
     ) -> Self {
         let builder = context.create_builder();
 
@@ -103,7 +103,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             builder,
             entry_function: main_prototype,
             function: None,
-            prelude_functions,
+            core_functions,
             strings: HashMap::new(),
         }
     }
@@ -149,18 +149,18 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 }
 
 #[derive(Debug, Enum)]
-pub enum RTFunction {
+pub enum CoreFunction {
     PrintStr,
     PrintInt,
     PrintBool,
 }
 
-impl From<RTFunction> for &'static str {
-    fn from(rt: RTFunction) -> Self {
-        match rt {
-            RTFunction::PrintStr => "__rinha_rt_print_str",
-            RTFunction::PrintInt => "__rinha_rt_print_int",
-            RTFunction::PrintBool => "__rinha_rt_print_bool",
+impl From<CoreFunction> for &'static str {
+    fn from(funct: CoreFunction) -> Self {
+        match funct {
+            CoreFunction::PrintStr => "__rinha_print_str",
+            CoreFunction::PrintInt => "__rinha_print_int",
+            CoreFunction::PrintBool => "__rinha_print_bool",
         }
     }
 }

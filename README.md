@@ -11,8 +11,8 @@ O compilador espera como argumento o caminho para um arquivo de AST em JSON e ge
 
 ```sh
 cargo run -- ./files/print.rinha.json
-gcc -c print.o target/debug/librinha_rt.a -o ./print
-chmod u+x  ./print
+gcc -c print.o target/debug/librinha_core.a -o ./print
+chmod u+x ./print
 ./print
 ```
 
@@ -28,4 +28,6 @@ chmod u+x  ./print
 
 ```sh
 sudo apt install llvm-15-dev libpolly-15-dev
+cd core
+cargo build
 ```

@@ -4,7 +4,7 @@ use inkwell::values::{AnyValueEnum, BasicMetadataValueEnum, CallSiteValue, Globa
 
 use crate::{
     ast,
-    compiler::{Compiler, RTFunction},
+    compiler::{Compiler, CoreFunction},
 };
 
 pub trait Codegen {
@@ -134,25 +134,26 @@ impl Codegen for ast::Print {
     type R<'ctx> = CallSiteValue<'ctx>;
     fn codegen<'ctx>(&self, compiler: &Compiler<'_, 'ctx>) -> Self::R<'ctx> {
         // Target::initialize_all(&InitializationConfig::default());
-        let (params, funct): (Vec<BasicMetadataValueEnum>, RTFunction) = match self.value.as_ref() {
+        let (params, funct): (Vec<BasicMetadataValueEnum>, CoreFunction) = match self.value.as_ref()
+        {
             ast::Term::Str(s) => (
                 {
                     let (string, len) = s.codegen(compiler);
                     vec![string.as_pointer_value().into(), len.into()]
                 },
-                RTFunction::PrintStr,
+                CoreFunction::PrintStr,
             ),
-            ast::Term::Int(i) => (vec![i.codegen(compiler).into()], RTFunction::PrintInt),
-            ast::Term::Bool(i) => (vec![i.codegen(compiler).into()], RTFunction::PrintBool),
+            ast::Term::Int(i) => (vec![i.codegen(compiler).into()], CoreFunction::PrintInt),
+            ast::Term::Bool(i) => (vec![i.codegen(compiler).into()], CoreFunction::PrintBool),
             ast::Term::Binary(b) => {
                 let operation = b.codegen(compiler);
                 let (result, print_fn) = match operation {
                     AnyValueEnum::IntValue(i) => (
                         vec![i.into()],
                         if is_boolean(i) {
-                            RTFunction::PrintBool
+                            CoreFunction::PrintBool
                         } else {
-                            RTFunction::PrintInt
+                            CoreFunction::PrintInt
                         },
                     ),
                     _ => todo!(),
@@ -163,7 +164,7 @@ impl Codegen for ast::Print {
             _ => unimplemented!(),
         };
 
-        let funct = &compiler.prelude_functions[funct];
+        let funct = &compiler.core_functions[funct];
         let funct_pointer = funct.as_global_value().as_pointer_value();
         let ret =
             compiler

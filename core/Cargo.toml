@@ -1,10 +1,10 @@
 [package]
-name = "rinha-rt"
+name = "rinha-core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "rinha_rt"
+name = "rinha_core"
 crate-type = ["staticlib"]
 
 
