@@ -4,7 +4,8 @@
 #[no_mangle]
 pub unsafe fn __rinha_print_str(data: *const u8, len: usize) {
     if data.is_null() {
-        println!()
+        println!("<#null>");
+        return;
     }
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
     let string = std::str::from_utf8(slice).unwrap();
