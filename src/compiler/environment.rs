@@ -51,11 +51,6 @@ impl<'ctx> Scopes<'ctx> {
 
         self.current.swap(&parent);
     }
-
-    // pub fn current(&mut self) -> &mut Scope<'ctx> {
-    //     self.current_scope.borrow_mut()
-    // }
-    // pub fn leave(&)
 }
 
 impl<'ctx> Drop for Scope<'ctx> {
