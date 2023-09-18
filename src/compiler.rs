@@ -1,3 +1,5 @@
+pub mod environment;
+
 use std::{collections::HashMap, path::Path};
 
 use enum_map::{Enum, EnumMap};
@@ -6,11 +8,16 @@ use inkwell::{
     context::Context,
     module::{Linkage, Module},
     targets::{InitializationConfig, Target, TargetTriple},
-    values::{FunctionValue, GlobalValue},
+    values::FunctionValue,
     AddressSpace,
 };
 
-use crate::{ast, codegen::Codegen};
+use crate::{
+    ast,
+    codegen::{traits::Codegen, value::Str},
+};
+
+use self::environment::{Scope, Scopes};
 
 pub struct Rinhac {}
 
@@ -22,9 +29,16 @@ impl Rinhac {
         let triple = TargetTriple::create(current_platform::CURRENT_PLATFORM);
         module.set_triple(&triple);
 
+        let builder = context.create_builder();
         let core = Self::define_core_functions(&context, &module);
-        let compiler = Compiler::new(&context, &module, core);
-        compiler.compile(&ast.expression);
+
+        let mut compiler = Compiler::new(&context, &module, core, builder);
+
+        let mut next = Some(&ast.expression);
+        while let Some(next_term) = next {
+            next = compiler.compile(next_term);
+        }
+
         compiler.finalize();
 
         println!("GENERATED IR:\n{}", module.print_to_string().to_string(),)
@@ -80,7 +94,8 @@ pub struct Compiler<'a, 'ctx> {
     pub entry_function: FunctionValue<'ctx>,
     pub function: Option<FunctionValue<'ctx>>,
     pub core_functions: EnumMap<CoreFunction, FunctionValue<'ctx>>,
-    pub strings: HashMap<String, GlobalValue<'ctx>>,
+    pub strings: HashMap<String, Str<'ctx>>,
+    pub scope: Scopes<'ctx>,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -88,9 +103,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         context: &'ctx Context,
         module: &'a Module<'ctx>,
         core_functions: EnumMap<CoreFunction, FunctionValue<'ctx>>,
+        builder: Builder<'ctx>,
     ) -> Self {
-        let builder = context.create_builder();
-
+        builder.clear_insertion_position();
         let main_type = context.void_type().fn_type(&[], false);
         let main_prototype = module.add_function("main", main_type, Some(Linkage::External));
 
@@ -105,14 +120,29 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             function: None,
             core_functions,
             strings: HashMap::new(),
+            scope: Scopes::new(Scope::new("main", entry_block, None)),
         }
     }
 
-    pub fn compile(&self, term: &ast::Term) {
+    pub fn compile<'t>(&mut self, term: &'t ast::Term) -> Option<&'t ast::Term> {
         match term {
-            ast::Term::Print(print) => print.codegen(self),
+            ast::Term::Print(print) => {
+                print.codegen(self);
+                None
+            }
+            ast::Term::Let(binding) => {
+                binding.codegen(self);
+                Some(&binding.next)
+            }
+            // ignore top-level values for now
+            ast::Term::Var(..)
+            | ast::Term::Tuple(..)
+            | ast::Term::Binary(..)
+            | ast::Term::Bool(..)
+            | ast::Term::Int(..)
+            | ast::Term::Str(..) => None,
             _ => todo!(),
-        };
+        }
     }
 
     pub fn finalize(&self) {
@@ -129,14 +159,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Target::initialize_all(&InitializationConfig::default());
 
         let target = Target::from_triple(&self.module.get_triple()).unwrap();
+
         let tm = target
             .create_target_machine(
                 &self.module.get_triple(),
                 "generic",
                 "",
                 inkwell::OptimizationLevel::None,
-                inkwell::targets::RelocMode::Default,
-                inkwell::targets::CodeModel::Default,
+                inkwell::targets::RelocMode::PIC,
+                inkwell::targets::CodeModel::Medium,
             )
             .unwrap();
         tm.write_to_file(
@@ -164,3 +195,9 @@ impl From<CoreFunction> for &'static str {
         }
     }
 }
+
+// impl Scope {
+//     pub fn enter(&self, name: &str) -> Option<BasicValueEnum> {
+//         self.variables.get(name).copied()
+//     }
+// }
