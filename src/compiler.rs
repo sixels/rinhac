@@ -14,7 +14,7 @@ use inkwell::{
 
 use crate::{
     ast,
-    codegen::{traits::Codegen, value::Str},
+    codegen::{traits::Codegen, value::Str, FIRST_BLOCK_NAME},
 };
 
 use self::environment::{Scope, Scopes};
@@ -109,7 +109,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let main_type = context.void_type().fn_type(&[], false);
         let main_prototype = module.add_function("main", main_type, Some(Linkage::External));
 
-        let entry_block = context.append_basic_block(main_prototype, "entry");
+        let entry_block = context.append_basic_block(main_prototype, FIRST_BLOCK_NAME);
         builder.position_at_end(entry_block);
 
         Self {

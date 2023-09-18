@@ -15,6 +15,8 @@ use self::{
     value::{Primitive, Str, Value, ValueRef},
 };
 
+pub const FIRST_BLOCK_NAME: &str = "start";
+
 impl Codegen for ast::Int {
     type R<'ctx> = Primitive<'ctx>;
     fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
