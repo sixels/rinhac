@@ -61,6 +61,7 @@ impl<'ctx> Drop for Scope<'ctx> {
 
 pub type ScopeNode<'ctx> = Rc<RefCell<Scope<'ctx>>>;
 
+#[derive(Debug)]
 pub struct Scope<'ctx> {
     pub name: String,
     pub block: BasicBlock<'ctx>,

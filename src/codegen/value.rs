@@ -1,9 +1,11 @@
 use inkwell::{
     types::BasicTypeEnum,
-    values::{BasicValueEnum, IntValue, PointerValue},
+    values::{BasicValueEnum, FunctionValue, IntValue, PointerValue},
 };
 
 use crate::compiler::Compiler;
+
+use super::traits::DerefValue;
 
 pub enum ValueKind {
     Int,
@@ -20,7 +22,8 @@ pub enum Value<'ctx> {
 #[derive(Debug, Clone, Copy)]
 pub enum ValueRef<'ctx> {
     Primitive(PrimitiveRef<'ctx>),
-    Str(Str<'ctx>),
+    Str(StrRef<'ctx>),
+    Closure(Closure<'ctx>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -41,9 +44,29 @@ pub struct Str<'ctx> {
     pub len: IntValue<'ctx>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StrRef<'ctx> {
+    pub ptr: PointerValue<'ctx>,
+    pub len: IntValue<'ctx>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Closure<'ctx> {
+    pub funct: FunctionValue<'ctx>,
+}
+
 impl<'ctx> Str<'ctx> {
     pub fn new(ptr: PointerValue<'ctx>, len: IntValue<'ctx>) -> Self {
         Self { ptr, len }
+    }
+}
+
+impl<'ctx> Closure<'ctx> {
+    pub fn new(funct: FunctionValue<'ctx>) -> Self {
+        Self { funct }
+    }
+    pub fn build_load(&self, _compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
+        todo!()
     }
 }
 
@@ -67,15 +90,16 @@ impl<'ctx> Value<'ctx> {
         match self {
             Self::Primitive(Primitive::Bool(_)) => ValueRef::Primitive(PrimitiveRef::Bool(ptr)),
             Self::Primitive(Primitive::Int(_)) => ValueRef::Primitive(PrimitiveRef::Int(ptr)),
-            Self::Str(s) => ValueRef::Str(Str { ptr, len: s.len }),
+            Self::Str(s) => ValueRef::Str(StrRef { ptr, len: s.len }),
         }
     }
 }
 
-impl<'ctx> ValueRef<'ctx> {
-    pub fn build_load(&self, compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
+impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {
+    type R = Value<'ctx>;
+    fn build_deref(&self, compiler: &Compiler<'_, 'ctx>) -> Self::R {
         match self {
-            Self::Primitive(primitive) => primitive.build_load(compiler).into(),
+            Self::Primitive(primitive) => primitive.build_deref(compiler).into(),
             Self::Str(str) => Str::new(
                 compiler
                     .builder
@@ -84,12 +108,14 @@ impl<'ctx> ValueRef<'ctx> {
                 str.len,
             )
             .into(),
+            Self::Closure(closure) => closure.build_load(compiler),
         }
     }
 }
 
-impl<'ctx> PrimitiveRef<'ctx> {
-    pub fn build_load(&self, compiler: &Compiler<'_, 'ctx>) -> Primitive<'ctx> {
+impl<'ctx> DerefValue<'ctx> for PrimitiveRef<'ctx> {
+    type R = Primitive<'ctx>;
+    fn build_deref(&self, compiler: &Compiler<'_, 'ctx>) -> Self::R {
         match self {
             Self::Bool(bool_ref) => Primitive::Bool(
                 compiler
@@ -104,6 +130,19 @@ impl<'ctx> PrimitiveRef<'ctx> {
                     .into_int_value(),
             ),
         }
+    }
+}
+
+impl<'ctx> DerefValue<'ctx> for StrRef<'ctx> {
+    type R = Str<'ctx>;
+    fn build_deref(&self, compiler: &Compiler<'_, 'ctx>) -> Self::R {
+        Str::new(
+            compiler
+                .builder
+                .build_load(self.ptr.get_type(), self.ptr, "tmploadstr")
+                .into_pointer_value(),
+            self.len,
+        )
     }
 }
 

@@ -11,7 +11,7 @@ use crate::{
 };
 
 use self::{
-    traits::Codegen,
+    traits::{Codegen, DerefValue},
     value::{Primitive, Str, Value, ValueRef},
 };
 
@@ -80,7 +80,7 @@ impl Codegen for ast::Binary {
                 ast::Term::Int(i) => i.codegen(compiler).into(),
                 ast::Term::Bool(b) => b.codegen(compiler).into(),
                 ast::Term::Binary(b) => b.codegen(compiler),
-                ast::Term::Var(v) => v.codegen(compiler).build_load(compiler),
+                ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
                 // ast::Term::Str(s) => s.codegen(compiler).into(),
                 _ => unimplemented!(),
             }
@@ -180,7 +180,7 @@ impl Codegen for ast::Print {
             ast::Term::Bool(b) => b.codegen(compiler).into(),
             ast::Term::Str(s) => s.codegen(compiler).into(),
             ast::Term::Binary(b) => b.codegen(compiler),
-            ast::Term::Var(v) => v.codegen(compiler).build_load(compiler),
+            ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
             _ => todo!(),
         };
 
