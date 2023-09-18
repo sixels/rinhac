@@ -1,11 +1,9 @@
 use inkwell::{
     types::BasicTypeEnum,
-    values::{BasicMetadataValueEnum, BasicValueEnum, IntValue, PointerValue},
+    values::{BasicValueEnum, IntValue, PointerValue},
 };
 
-use crate::compiler::{Compiler, CoreFunction};
-
-use super::traits::Displayable;
+use crate::compiler::Compiler;
 
 pub enum ValueKind {
     Int,
@@ -138,38 +136,6 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
         match *value {
             Value::Primitive(primitive) => primitive.into(),
             Value::Str(str) => str.ptr.into(),
-        }
-    }
-}
-
-impl<'ctx> Displayable<'ctx> for ValueRef<'ctx> {
-    fn display_params(
-        &self,
-        compiler: &mut Compiler<'_, 'ctx>,
-    ) -> (
-        crate::compiler::CoreFunction,
-        Vec<BasicMetadataValueEnum<'ctx>>,
-    ) {
-        match self {
-            ValueRef::Primitive(primitive) => match primitive {
-                PrimitiveRef::Int(ptr) => {
-                    let t = compiler.context.i32_type();
-                    let p = *ptr;
-                    (
-                        CoreFunction::PrintInt,
-                        vec![compiler.builder.build_load(t, p, "load").into()],
-                    )
-                }
-                PrimitiveRef::Bool(ptr) => {
-                    let t = compiler.context.bool_type();
-                    let p = *ptr;
-                    (
-                        CoreFunction::PrintBool,
-                        vec![compiler.builder.build_load(t, p, "load").into()],
-                    )
-                }
-            },
-            ValueRef::Str(str) => (CoreFunction::PrintStr, vec![str.ptr.into(), str.len.into()]),
         }
     }
 }
