@@ -5,8 +5,6 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[workspace]
-members = [".", "core"]
 
 [dependencies]
 current_platform = "0.2.0"
@@ -14,4 +12,3 @@ enum-map = "2.6.3"
 inkwell = { version = "0.2.0", features = ["llvm15-0"] }
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = "1.0.106"
-rinha-core = { path = "./core" }
