@@ -7,16 +7,11 @@ use crate::compiler::Compiler;
 
 use super::traits::DerefValue;
 
-pub enum ValueKind {
-    Int,
-    Bool,
-    Str(u32),
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum Value<'ctx> {
     Primitive(Primitive<'ctx>),
     Str(Str<'ctx>),
+    Closure(Closure<'ctx>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +48,52 @@ pub struct StrRef<'ctx> {
 #[derive(Debug, Clone, Copy)]
 pub struct Closure<'ctx> {
     pub funct: FunctionValue<'ctx>,
+    pub returns: ReturnType,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct ReturnType(u16);
+
+impl ReturnType {
+    pub const RETURN_INT: ReturnType = ReturnType(1 << 0);
+    pub const RETURN_BOOL: ReturnType = ReturnType(1 << 1);
+    pub const RETURN_STR: ReturnType = ReturnType(1 << 2);
+    pub const RETURN_CLOSURE: ReturnType = ReturnType(1 << 3);
+
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn with_int(mut self) -> Self {
+        self.0 |= Self::RETURN_INT.0;
+        self
+    }
+    pub fn with_bool(mut self) -> Self {
+        self.0 |= Self::RETURN_BOOL.0;
+        self
+    }
+    pub fn with_str(mut self) -> Self {
+        self.0 |= Self::RETURN_STR.0;
+        self
+    }
+    pub fn with_closure(mut self) -> Self {
+        self.0 |= Self::RETURN_CLOSURE.0;
+        self
+    }
+
+    pub fn has_int(self) -> bool {
+        self.0 & Self::RETURN_INT.0 != 0
+    }
+    pub fn has_bool(self) -> bool {
+        self.0 & Self::RETURN_BOOL.0 != 0
+    }
+    pub fn has_str(self) -> bool {
+        self.0 & Self::RETURN_STR.0 != 0
+    }
+    pub fn has_closure(self) -> bool {
+        self.0 & Self::RETURN_CLOSURE.0 != 0
+    }
 }
 
 impl<'ctx> Str<'ctx> {
@@ -63,7 +104,10 @@ impl<'ctx> Str<'ctx> {
 
 impl<'ctx> Closure<'ctx> {
     pub fn new(funct: FunctionValue<'ctx>) -> Self {
-        Self { funct }
+        Self {
+            funct,
+            returns: ReturnType::new(),
+        }
     }
     pub fn build_load(&self, _compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
         todo!()
@@ -78,6 +122,12 @@ impl<'ctx> Value<'ctx> {
                 Primitive::Bool(b) => b.get_type().into(),
             },
             Value::Str(str) => str.ptr.get_type().into(),
+            Value::Closure(closure) => closure
+                .funct
+                .as_global_value()
+                .as_pointer_value()
+                .get_type()
+                .into(),
         }
     }
 
@@ -91,6 +141,7 @@ impl<'ctx> Value<'ctx> {
             Self::Primitive(Primitive::Bool(_)) => ValueRef::Primitive(PrimitiveRef::Bool(ptr)),
             Self::Primitive(Primitive::Int(_)) => ValueRef::Primitive(PrimitiveRef::Int(ptr)),
             Self::Str(s) => ValueRef::Str(StrRef { ptr, len: s.len }),
+            Self::Closure(closure) => ValueRef::Closure(*closure),
         }
     }
 }
@@ -175,6 +226,7 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
         match *value {
             Value::Primitive(primitive) => primitive.into(),
             Value::Str(str) => str.ptr.into(),
+            Value::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
         }
     }
 }

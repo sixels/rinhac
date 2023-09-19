@@ -7,7 +7,7 @@ use inkwell::values::CallSiteValue;
 
 use crate::{
     ast,
-    compiler::{Compiler, CoreFunction},
+    compiler::{Compiler, CoreFunction, Function},
 };
 
 use self::{
@@ -190,6 +190,7 @@ impl Codegen for ast::Print {
                 Primitive::Bool(bool) => (CoreFunction::PrintBool, vec![bool.into()]),
                 Primitive::Int(int) => (CoreFunction::PrintInt, vec![int.into()]),
             },
+            Value::Closure(_closure) => todo!("should print '<#closure>'"),
         };
 
         let funct = &compiler.core_functions[funct];
@@ -212,7 +213,19 @@ impl Codegen for ast::Let {
             ast::Term::Bool(s) => s.codegen(compiler).into(),
             ast::Term::Str(s) => Value::Str(s.codegen(compiler)),
             ast::Term::Binary(b) => b.codegen(compiler),
-            _ => todo!(),
+            ast::Term::Function(f) => {
+                compiler.functions.insert(
+                    self.name.text.clone(),
+                    Function {
+                        name: self.name.text.clone(),
+                        funct: None,
+                        body: f.clone(),
+                    },
+                );
+
+                todo!()
+            }
+            _ => unimplemented!(),
         };
 
         let variable = value.build_variable(compiler, &self.name.text);
