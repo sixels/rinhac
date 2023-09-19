@@ -81,7 +81,7 @@ impl Codegen for ast::Binary {
                 ast::Term::Bool(b) => b.codegen(compiler).into(),
                 ast::Term::Binary(b) => b.codegen(compiler),
                 ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
-                // ast::Term::Str(s) => s.codegen(compiler).into(),
+                ast::Term::Str(s) => s.codegen(compiler).into(),
                 _ => unimplemented!(),
             }
         };
@@ -164,6 +164,36 @@ impl Codegen for ast::Binary {
                 })
                 .into(),
                 (_l, _r) => panic!("bool and int operations are not allowed"),
+            },
+            (Value::Str(l), Value::Str(r)) => match self.op {
+                ast::BinaryOp::Add => {
+                    let size = l.len.const_add(r.len);
+                    let new_str =
+                        compiler
+                            .builder
+                            .build_array_alloca(compiler.context.i8_type(), size, "");
+
+                    compiler
+                        .builder
+                        .build_memcpy(new_str, 1, l.ptr, 1, l.len)
+                        .unwrap();
+                    // safety: we just allocated the right amount of memory
+                    let new_str_tail = unsafe {
+                        compiler.builder.build_gep(
+                            compiler.context.i8_type(),
+                            new_str,
+                            &[l.len],
+                            "",
+                        )
+                    };
+                    compiler
+                        .builder
+                        .build_memcpy(new_str_tail, 1, r.ptr, 1, r.len)
+                        .unwrap();
+
+                    Str::new(new_str, size).into()
+                }
+                _ => todo!(),
             },
             _ => todo!(),
         };
