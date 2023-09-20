@@ -1,9 +1,10 @@
 let foo = fn (a, b, c) => {
-    bar(a)
+    bar(c, b, a)
 };
 
-let bar = fn (n) => {
-    1
+let bar = fn (x, b, c) => {
+    let c = 2 + c;
+    print((b == c) == x) 
 };
 
-foo(1+2,"3", true)
+foo(1+2, 5, true)

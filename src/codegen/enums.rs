@@ -70,7 +70,7 @@ impl<'ctx> TypeEnum<'ctx> {
         Self(Enum(enum_ptr))
     }
 
-    pub fn createInstance<V: TypeEnumVariant<'ctx>>(
+    pub fn create_instance<V: TypeEnumVariant<'ctx>>(
         self,
         compiler: &Compiler<'_, 'ctx>,
         variant: &V,

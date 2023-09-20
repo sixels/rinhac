@@ -3,9 +3,22 @@ use inkwell::{
     values::{BasicValueEnum, FunctionValue, IntValue, PointerValue},
 };
 
-use crate::compiler::Compiler;
+use crate::{
+    ast,
+    compiler::{
+        environment::{ScopeNode, ScopeRc, Variable},
+        Compiler,
+    },
+};
 
-use super::traits::DerefValue;
+use super::traits::{Codegen, DerefValue};
+
+pub enum ValueType {
+    Int,
+    Bool,
+    Str,
+    Closure,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Value<'ctx> {
@@ -39,6 +52,12 @@ pub struct Str<'ctx> {
     pub len: IntValue<'ctx>,
 }
 
+impl<'ctx> Str<'ctx> {
+    pub fn new(ptr: PointerValue<'ctx>, len: IntValue<'ctx>) -> Self {
+        Self { ptr, len }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct StrRef<'ctx> {
     pub ptr: PointerValue<'ctx>,
@@ -51,17 +70,6 @@ pub struct Closure<'ctx> {
     // pub returns: ReturnType<'ctx>,
 }
 
-// #[derive(Debug, Clone, Copy)]
-// pub struct ReturnType<'ctx> {
-//     pub vref: &'ctx (),
-// }
-
-impl<'ctx> Str<'ctx> {
-    pub fn new(ptr: PointerValue<'ctx>, len: IntValue<'ctx>) -> Self {
-        Self { ptr, len }
-    }
-}
-
 impl<'ctx> Closure<'ctx> {
     pub fn new(funct: FunctionValue<'ctx>) -> Self {
         Self {
@@ -71,6 +79,72 @@ impl<'ctx> Closure<'ctx> {
     }
     pub fn build_load(&self, _compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
         todo!()
+    }
+
+    pub(crate) fn build_definition(
+        &self,
+        compiler: &mut Compiler<'_, 'ctx>,
+        params: Vec<(Value<'ctx>, String)>,
+        body: &ast::Term,
+    ) {
+        // put parameters in current scope
+        let params = self
+            .funct
+            .get_param_iter()
+            .skip(1)
+            .zip(params.into_iter())
+            .map(|(param, (val, name))| {
+                (
+                    name,
+                    match val {
+                        Value::Primitive(Primitive::Int(_)) => {
+                            Variable::Constant(Primitive::Int(param.into_int_value()).into())
+                        }
+                        Value::Primitive(Primitive::Bool(_)) => {
+                            Variable::Constant(Primitive::Bool(param.into_int_value()).into())
+                        }
+                        Value::Str(str) => Variable::Constant(Value::Str(Str::new(
+                            param.into_pointer_value(),
+                            str.len,
+                        ))),
+                        Value::Closure(_) => todo!(),
+                    },
+                )
+            });
+
+        for (name, param) in params.into_iter() {
+            compiler.scope.add_variable(name, param);
+        }
+
+        let mut next = Some(body);
+        while let Some(term) = next {
+            next = match term {
+                ast::Term::Print(print) => {
+                    print.codegen(compiler);
+                    None
+                }
+                ast::Term::Let(binding) => {
+                    binding.codegen(compiler);
+                    Some(&binding.next)
+                }
+
+                ast::Term::Call(call) => {
+                    call.codegen(compiler);
+                    None
+                }
+
+                // ignore top-level values for now
+                ast::Term::Var(..)
+                | ast::Term::Tuple(..)
+                | ast::Term::Binary(..)
+                | ast::Term::Bool(..)
+                | ast::Term::Int(..)
+                | ast::Term::Str(..) => None,
+                _ => todo!(),
+            };
+        }
+
+        compiler.builder.build_return(None);
     }
 }
 
@@ -190,20 +264,3 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
         }
     }
 }
-
-// impl<'ctx> From<BasicTypeEnum<'ctx>> for Variable<'ctx> {
-//     fn from(ptr: PointerValue<'ctx>, ty: BasicTypeEnum) -> Self {
-//         match ty {
-//             BasicValueEnum::IntValue(i) => {
-//                 if i.get_type().get_bit_width() == 1 {
-//                     Self::Bool
-//                 } else {
-//                     Self::Int
-//                 }
-//             }
-//             BasicValueEnum::PointerValue(_) => Self::Str,
-//             BasicValueEnum::ArrayValue(_) => Self::Str,
-//             ty => panic!("invalid value type: {ty:#?}"),
-//         }
-//     }
-// }

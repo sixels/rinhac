@@ -2,12 +2,20 @@ pub mod enums;
 pub mod traits;
 pub mod value;
 
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue};
+use std::rc::Rc;
+
+use inkwell::{
+    attributes::Attribute,
+    module::Linkage,
+    types::BasicMetadataTypeEnum,
+    values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, PointerValue},
+};
 
 use crate::{
     ast,
+    codegen::{enums::Enum, value::Closure},
     compiler::{
-        environment::{Function, Variable},
+        environment::{Function, ScopeNode, Variable},
         Compiler, CoreFunction,
     },
 };
@@ -65,7 +73,7 @@ impl Codegen for ast::Var {
         let var = compiler
             .scope
             .find_variable(&self.text)
-            .expect("Variable not defined");
+            .unwrap_or_else(|| panic!("Variable {} not defined", self.text));
 
         var.clone()
     }
@@ -81,6 +89,7 @@ impl Codegen for ast::Binary {
                 ast::Term::Binary(b) => b.codegen(compiler),
                 ast::Term::Var(v) => match v.codegen(compiler) {
                     Variable::Value(v) => v.build_deref(compiler),
+                    Variable::Constant(c) => c,
                     Variable::Function(_) => panic!("can't perform operations on functions"),
                 },
                 ast::Term::Str(s) => s.codegen(compiler).into(),
@@ -214,6 +223,7 @@ impl Codegen for ast::Print {
             ast::Term::Binary(b) => b.codegen(compiler),
             ast::Term::Var(v) => match v.codegen(compiler) {
                 Variable::Value(v) => v.build_deref(compiler),
+                Variable::Constant(c) => c,
                 Variable::Function(_) => todo!("can't print functions yet"),
             },
             _ => todo!(),
@@ -240,7 +250,7 @@ impl Codegen for ast::Print {
 }
 
 impl Codegen for ast::Call {
-    type R<'ctx> = ();
+    type R<'ctx> = PointerValue<'ctx>;
     fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
         let funct_name = match self.callee.as_ref() {
             ast::Term::Var(v) => v.text.as_ref(),
@@ -262,6 +272,7 @@ impl Codegen for ast::Call {
                 ast::Term::Binary(b) => b.codegen(compiler),
                 ast::Term::Var(v) => match v.codegen(compiler) {
                     Variable::Value(v) => v.build_deref(compiler),
+                    Variable::Constant(c) => c,
                     Variable::Function(_) => panic!("can't perform operations on functions"),
                 },
                 ast::Term::Str(s) => s.codegen(compiler).into(),
@@ -275,64 +286,122 @@ impl Codegen for ast::Call {
             .map(|arg| resolve_value(arg))
             .collect::<Vec<_>>();
 
-        let funct_ref = funct.borrow_mut();
+        let arguments_types = arguments
+            .iter()
+            .map(|arg| arg.get_type())
+            .collect::<Vec<_>>();
 
-        if let Some(monomorphized_definition_index) =
-            funct_ref.call_with.iter().position(|params| {
-                params
+        let closure = funct
+            .borrow_mut()
+            .get_or_insert_definition(&arguments_types, |funct_ref| {
+                // bad end: we need to create a new function
+
+                let param_names = funct_ref
+                    .body
+                    .parameters
                     .iter()
+                    .map(|p| p.text.clone())
+                    .collect::<Vec<_>>();
+
+                let mut param_types = arguments
+                    .iter()
+                    .map(|param| BasicMetadataTypeEnum::from(param.get_type()))
+                    .collect::<Vec<_>>();
+
+                let funct_name_monomorphized = if arguments.len() == 1 {
+                    String::from(funct_name)
+                } else {
+                    format!(
+                        "{}_{}",
+                        funct_name,
+                        param_types
+                            .iter()
+                            .map(|pt| pt.to_string())
+                            .collect::<Vec<_>>()
+                            .join("_")
+                    )
+                };
+
+                param_types.insert(
+                    0,
+                    Enum::generic_type(compiler)
+                        .ptr_type(Default::default())
+                        .into(),
+                );
+
+                let signature = compiler.context.void_type().fn_type(&param_types, false);
+                let prototype = compiler.module.add_function(
+                    &funct_name_monomorphized,
+                    signature,
+                    Some(Linkage::Internal),
+                );
+
+                prototype.add_attribute(
+                    inkwell::attributes::AttributeLoc::Param(0),
+                    compiler.context.create_type_attribute(
+                        Attribute::get_named_enum_kind_id("sret"),
+                        Enum::generic_type(compiler).into(),
+                    ),
+                );
+                let closure = Closure::new(prototype);
+
+                let fn_block = compiler
+                    .context
+                    .append_basic_block(prototype, FIRST_BLOCK_NAME);
+
+                let param_values = closure
+                    .funct
+                    .get_param_iter()
+                    .skip(1)
                     .zip(arguments.iter())
-                    .all(|(&a, &b)| a == b.get_type())
-            })
-        {
-            // happy end: we already defined this function for the given argument types
-            let closure = funct_ref
-                .definition
-                .get(monomorphized_definition_index)
-                .unwrap();
+                    .map(|(param, val)| match val {
+                        Value::Primitive(Primitive::Int(_)) => {
+                            Value::Primitive(Primitive::Int(param.into_int_value()))
+                        }
+                        Value::Primitive(Primitive::Bool(_)) => {
+                            Value::Primitive(Primitive::Bool(param.into_int_value()))
+                        }
+                        Value::Str(str) => {
+                            Value::Str(Str::new(param.into_pointer_value(), str.len))
+                        }
+                        Value::Closure(_) => todo!(),
+                    })
+                    .zip(param_names)
+                    .collect::<Vec<(Value, String)>>();
 
-            let ret = compiler.builder.build_direct_call(
-                closure.funct,
-                &arguments
-                    .iter()
-                    .map(|arg| BasicValueEnum::from(arg).into())
-                    .collect::<Vec<BasicMetadataValueEnum>>(),
-                "",
-            );
-        }
+                let closure_scope = funct_ref
+                    .definition_scope
+                    .create_child(fn_block, Some(closure));
+                let call_scope = Rc::clone(&compiler.scope);
 
-        todo!()
+                compiler.scope.clone_from(&closure_scope);
+                compiler
+                    .builder
+                    .position_at_end(closure_scope.borrow().block);
 
-        // let funct = compiler
-        //     .
-        //     .get(funct_name)
-        //     .expect("Function not defined");
+                let function_body = &funct_ref.body.value;
+                closure.build_definition(compiler, param_values, function_body);
 
-        // if (!funct.called) {
-        //     if funct.body.parameters.len() != self.arguments.len() {
-        //         panic!("invalid number of arguments");
-        //     }
-        //     // let mut scope = compiler.scope.current.borrow_mut();
-        // }
+                compiler.scope.clone_from(&call_scope);
+                compiler.builder.position_at_end(call_scope.borrow().block);
 
-        // let funct_pointer = funct.as_global_value().as_pointer_value();
+                closure
+            });
 
-        // let params = self
-        //     .args
-        //     .iter()
-        //     .map(|arg| match arg.as_ref() {
-        //         ast::Term::Int(i) => i.codegen(compiler).into(),
-        //         ast::Term::Bool(b) => b.codegen(compiler).into(),
-        //         ast::Term::Str(s) => s.codegen(compiler).into(),
-        //         ast::Term::Binary(b) => b.codegen(compiler),
-        //         ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
-        //         _ => todo!(),
-        //     })
-        //     .collect::<Vec<_>>();
+        // happy end: we already defined this function for the given argument types
+        let mut args = arguments
+            .iter()
+            .map(|arg| BasicValueEnum::from(arg).into())
+            .collect::<Vec<BasicMetadataValueEnum>>();
 
-        // compiler
-        //     .builder
-        //     .build_call(funct_pointer, &params, &self.name.text);
+        let sret = compiler
+            .builder
+            .build_alloca(Enum::generic_type(compiler), "");
+        args.insert(0, sret.into());
+
+        compiler.builder.build_direct_call(closure.funct, &args, "");
+
+        sret
     }
 }
 
@@ -346,14 +415,9 @@ impl Codegen for ast::Let {
             ast::Term::Str(s) => Value::Str(s.codegen(compiler)),
             ast::Term::Binary(b) => b.codegen(compiler),
             ast::Term::Function(f) => {
-                let funct = Variable::Function(Function::new(f.clone()));
-                compiler
-                    .scope
-                    .current
-                    .borrow_mut()
-                    .variables
-                    .insert(self.name.text.clone(), funct.clone());
-                return funct.clone();
+                let funct = Variable::Function(Function::new(f.clone(), &compiler.scope));
+                compiler.scope.add_variable(&self.name.text, funct.clone());
+                return funct;
             }
             _ => unimplemented!(),
         };
@@ -362,10 +426,7 @@ impl Codegen for ast::Let {
 
         compiler
             .scope
-            .current
-            .borrow_mut()
-            .variables
-            .insert(self.name.text.clone(), Variable::Value(variable));
+            .add_variable(&self.name.text, Variable::Value(variable));
 
         Variable::Value(variable)
     }

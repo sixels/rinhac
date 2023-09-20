@@ -14,10 +14,14 @@ use inkwell::{
 
 use crate::{
     ast,
-    codegen::{traits::Codegen, value::Str, FIRST_BLOCK_NAME},
+    codegen::{
+        traits::Codegen,
+        value::{Closure, Str},
+        FIRST_BLOCK_NAME,
+    },
 };
 
-use self::environment::{Scope, Scopes};
+use self::environment::{Scope, ScopeRc};
 
 pub struct Rinhac {}
 
@@ -92,10 +96,9 @@ pub struct Compiler<'a, 'ctx> {
     pub module: &'a Module<'ctx>,
     pub builder: Builder<'ctx>,
     pub entry_function: FunctionValue<'ctx>,
-    pub function: Option<FunctionValue<'ctx>>,
     pub core_functions: EnumMap<CoreFunction, FunctionValue<'ctx>>,
     pub strings: HashMap<String, Str<'ctx>>,
-    pub scope: Scopes<'ctx>,
+    pub scope: ScopeRc<'ctx>,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -112,15 +115,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let entry_block = context.append_basic_block(main_prototype, FIRST_BLOCK_NAME);
         builder.position_at_end(entry_block);
 
+        let scope = Scope::new(entry_block, Closure::new(main_prototype), None);
         Self {
             context,
             module,
             builder,
             entry_function: main_prototype,
-            function: None,
             core_functions,
             strings: HashMap::new(),
-            scope: Scopes::new(Scope::new("main", entry_block, None)),
+            scope,
         }
     }
 
@@ -134,6 +137,12 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 binding.codegen(self);
                 Some(&binding.next)
             }
+
+            ast::Term::Call(call) => {
+                call.codegen(self);
+                None
+            }
+
             // ignore top-level values for now
             ast::Term::Var(..)
             | ast::Term::Tuple(..)
@@ -153,6 +162,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         if !self.entry_function.verify(true) {
             // todo: error handling
             // self.entry_function.print_to_stderr();
+            eprintln!("----------IR--------");
+            self.module.print_to_stderr();
             panic!("compilation failed: invalid entry-block code");
         }
 
@@ -177,6 +188,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         )
         .unwrap();
     }
+
+    // pub fn enter_scope(&mut self, scope: &ScopeNode<'ctx>) {
+    //     self.scope.enter(scope);
+    //     self.builder.position_at_end(scope.borrow().block);
+    // }
+
+    // pub fn leave_scope(&mut self) {
+    //     self.scope.leave();
+    //     self.builder.position_at_end(self.scope.current_block());
+    // }
 }
 
 #[derive(Debug, Enum)]
