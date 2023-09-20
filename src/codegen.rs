@@ -1,18 +1,20 @@
+pub mod enums;
 pub mod traits;
 pub mod value;
 
-use std::vec;
-
-use inkwell::values::CallSiteValue;
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue};
 
 use crate::{
     ast,
-    compiler::{Compiler, CoreFunction, Function},
+    compiler::{
+        environment::{Function, Variable},
+        Compiler, CoreFunction,
+    },
 };
 
 use self::{
     traits::{Codegen, DerefValue},
-    value::{Primitive, Str, Value, ValueRef},
+    value::{Primitive, Str, Value},
 };
 
 pub const FIRST_BLOCK_NAME: &str = "start";
@@ -58,17 +60,14 @@ impl Codegen for ast::Str {
 }
 
 impl Codegen for ast::Var {
-    type R<'ctx> = ValueRef<'ctx>;
+    type R<'ctx> = Variable<'ctx>;
     fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
         let var = compiler
             .scope
-            .current
-            .borrow()
-            .variables
-            .get(&self.text)
-            .copied()
+            .find_variable(&self.text)
             .expect("Variable not defined");
-        var
+
+        var.clone()
     }
 }
 
@@ -80,7 +79,10 @@ impl Codegen for ast::Binary {
                 ast::Term::Int(i) => i.codegen(compiler).into(),
                 ast::Term::Bool(b) => b.codegen(compiler).into(),
                 ast::Term::Binary(b) => b.codegen(compiler),
-                ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
+                ast::Term::Var(v) => match v.codegen(compiler) {
+                    Variable::Value(v) => v.build_deref(compiler),
+                    Variable::Function(_) => panic!("can't perform operations on functions"),
+                },
                 ast::Term::Str(s) => s.codegen(compiler).into(),
                 _ => unimplemented!(),
             }
@@ -210,7 +212,10 @@ impl Codegen for ast::Print {
             ast::Term::Bool(b) => b.codegen(compiler).into(),
             ast::Term::Str(s) => s.codegen(compiler).into(),
             ast::Term::Binary(b) => b.codegen(compiler),
-            ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
+            ast::Term::Var(v) => match v.codegen(compiler) {
+                Variable::Value(v) => v.build_deref(compiler),
+                Variable::Function(_) => todo!("can't print functions yet"),
+            },
             _ => todo!(),
         };
 
@@ -234,8 +239,105 @@ impl Codegen for ast::Print {
     }
 }
 
+impl Codegen for ast::Call {
+    type R<'ctx> = ();
+    fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
+        let funct_name = match self.callee.as_ref() {
+            ast::Term::Var(v) => v.text.as_ref(),
+            _ => panic!("invalid function call"),
+        };
+
+        let Some(variable) = compiler.scope.find_variable(funct_name)  else {
+            panic!("function not found")
+        };
+
+        let Variable::Function(funct) = variable else {
+            panic!("variable {} is not callable", funct_name)
+        };
+
+        let mut resolve_value = |term: &ast::Term| -> Value<'_> {
+            match term {
+                ast::Term::Int(i) => i.codegen(compiler).into(),
+                ast::Term::Bool(b) => b.codegen(compiler).into(),
+                ast::Term::Binary(b) => b.codegen(compiler),
+                ast::Term::Var(v) => match v.codegen(compiler) {
+                    Variable::Value(v) => v.build_deref(compiler),
+                    Variable::Function(_) => panic!("can't perform operations on functions"),
+                },
+                ast::Term::Str(s) => s.codegen(compiler).into(),
+                _ => unimplemented!(),
+            }
+        };
+
+        let arguments = self
+            .arguments
+            .iter()
+            .map(|arg| resolve_value(arg))
+            .collect::<Vec<_>>();
+
+        let funct_ref = funct.borrow_mut();
+
+        if let Some(monomorphized_definition_index) =
+            funct_ref.call_with.iter().position(|params| {
+                params
+                    .iter()
+                    .zip(arguments.iter())
+                    .all(|(&a, &b)| a == b.get_type())
+            })
+        {
+            // happy end: we already defined this function for the given argument types
+            let closure = funct_ref
+                .definition
+                .get(monomorphized_definition_index)
+                .unwrap();
+
+            let ret = compiler.builder.build_direct_call(
+                closure.funct,
+                &arguments
+                    .iter()
+                    .map(|arg| BasicValueEnum::from(arg).into())
+                    .collect::<Vec<BasicMetadataValueEnum>>(),
+                "",
+            );
+        }
+
+        todo!()
+
+        // let funct = compiler
+        //     .
+        //     .get(funct_name)
+        //     .expect("Function not defined");
+
+        // if (!funct.called) {
+        //     if funct.body.parameters.len() != self.arguments.len() {
+        //         panic!("invalid number of arguments");
+        //     }
+        //     // let mut scope = compiler.scope.current.borrow_mut();
+        // }
+
+        // let funct_pointer = funct.as_global_value().as_pointer_value();
+
+        // let params = self
+        //     .args
+        //     .iter()
+        //     .map(|arg| match arg.as_ref() {
+        //         ast::Term::Int(i) => i.codegen(compiler).into(),
+        //         ast::Term::Bool(b) => b.codegen(compiler).into(),
+        //         ast::Term::Str(s) => s.codegen(compiler).into(),
+        //         ast::Term::Binary(b) => b.codegen(compiler),
+        //         ast::Term::Var(v) => v.codegen(compiler).build_deref(compiler),
+        //         _ => todo!(),
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // compiler
+        //     .builder
+        //     .build_call(funct_pointer, &params, &self.name.text);
+    }
+}
+
 impl Codegen for ast::Let {
-    type R<'ctx> = ValueRef<'ctx>;
+    type R<'ctx> = Variable<'ctx>;
     fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
         let value_term = &self.value;
         let value = match value_term.as_ref() {
@@ -244,16 +346,14 @@ impl Codegen for ast::Let {
             ast::Term::Str(s) => Value::Str(s.codegen(compiler)),
             ast::Term::Binary(b) => b.codegen(compiler),
             ast::Term::Function(f) => {
-                compiler.functions.insert(
-                    self.name.text.clone(),
-                    Function {
-                        name: self.name.text.clone(),
-                        funct: None,
-                        body: f.clone(),
-                    },
-                );
-
-                todo!()
+                let funct = Variable::Function(Function::new(f.clone()));
+                compiler
+                    .scope
+                    .current
+                    .borrow_mut()
+                    .variables
+                    .insert(self.name.text.clone(), funct.clone());
+                return funct.clone();
             }
             _ => unimplemented!(),
         };
@@ -265,8 +365,8 @@ impl Codegen for ast::Let {
             .current
             .borrow_mut()
             .variables
-            .insert(self.name.text.clone(), variable);
+            .insert(self.name.text.clone(), Variable::Value(variable));
 
-        variable
+        Variable::Value(variable)
     }
 }

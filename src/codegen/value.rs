@@ -48,53 +48,13 @@ pub struct StrRef<'ctx> {
 #[derive(Debug, Clone, Copy)]
 pub struct Closure<'ctx> {
     pub funct: FunctionValue<'ctx>,
-    pub returns: ReturnType,
+    // pub returns: ReturnType<'ctx>,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(transparent)]
-pub struct ReturnType(u16);
-
-impl ReturnType {
-    pub const RETURN_INT: ReturnType = ReturnType(1 << 0);
-    pub const RETURN_BOOL: ReturnType = ReturnType(1 << 1);
-    pub const RETURN_STR: ReturnType = ReturnType(1 << 2);
-    pub const RETURN_CLOSURE: ReturnType = ReturnType(1 << 3);
-
-    pub fn new() -> Self {
-        Self(0)
-    }
-
-    pub fn with_int(mut self) -> Self {
-        self.0 |= Self::RETURN_INT.0;
-        self
-    }
-    pub fn with_bool(mut self) -> Self {
-        self.0 |= Self::RETURN_BOOL.0;
-        self
-    }
-    pub fn with_str(mut self) -> Self {
-        self.0 |= Self::RETURN_STR.0;
-        self
-    }
-    pub fn with_closure(mut self) -> Self {
-        self.0 |= Self::RETURN_CLOSURE.0;
-        self
-    }
-
-    pub fn has_int(self) -> bool {
-        self.0 & Self::RETURN_INT.0 != 0
-    }
-    pub fn has_bool(self) -> bool {
-        self.0 & Self::RETURN_BOOL.0 != 0
-    }
-    pub fn has_str(self) -> bool {
-        self.0 & Self::RETURN_STR.0 != 0
-    }
-    pub fn has_closure(self) -> bool {
-        self.0 & Self::RETURN_CLOSURE.0 != 0
-    }
-}
+// #[derive(Debug, Clone, Copy)]
+// pub struct ReturnType<'ctx> {
+//     pub vref: &'ctx (),
+// }
 
 impl<'ctx> Str<'ctx> {
     pub fn new(ptr: PointerValue<'ctx>, len: IntValue<'ctx>) -> Self {
@@ -106,7 +66,7 @@ impl<'ctx> Closure<'ctx> {
     pub fn new(funct: FunctionValue<'ctx>) -> Self {
         Self {
             funct,
-            returns: ReturnType::new(),
+            // returns: ReturnType::new(),
         }
     }
     pub fn build_load(&self, _compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {

@@ -1,8 +1,15 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashMap,
+    rc::Rc,
+};
 
-use inkwell::basic_block::BasicBlock;
+use inkwell::{basic_block::BasicBlock, types::BasicTypeEnum};
 
-use crate::codegen::value::ValueRef;
+use crate::{
+    ast,
+    codegen::value::{Closure, ValueRef},
+};
 
 pub struct Scopes<'ctx> {
     entry: ScopeNode<'ctx>,
@@ -35,21 +42,44 @@ impl<'ctx> Scopes<'ctx> {
     }
 
     pub fn leave(&mut self) {
-        let mut scope = self.current.borrow_mut();
+        let parent = {
+            let mut scope = self.current.borrow_mut();
 
-        let parent;
-        if let Some(node) = scope.parent.take() {
-            parent = node
-        } else {
-            parent = Rc::clone(&self.entry)
+            let prev_scope = if let Some(node) = scope.parent.take() {
+                node
+            } else {
+                Rc::clone(&self.entry)
+            };
+
+            prev_scope
+                .borrow_mut()
+                .children
+                .retain(|child| !Rc::ptr_eq(child, &self.current));
+
+            prev_scope
         };
+        self.current = parent;
+    }
 
-        parent
-            .borrow_mut()
-            .children
-            .retain(|child| !Rc::ptr_eq(child, &self.current));
+    pub fn find_variable(&self, name: &str) -> Option<Variable<'ctx>> {
+        let mut scope = Rc::clone(&self.current);
+        loop {
+            let parent = {
+                let scope_ref = scope.borrow();
 
-        self.current.swap(&parent);
+                if let Some(variable) = scope_ref.variables.get(name) {
+                    return Some(variable.clone());
+                }
+
+                if let Some(parent) = &scope_ref.parent {
+                    Rc::clone(parent)
+                } else {
+                    break;
+                }
+            };
+            scope = parent;
+        }
+        None
     }
 }
 
@@ -65,7 +95,7 @@ pub type ScopeNode<'ctx> = Rc<RefCell<Scope<'ctx>>>;
 pub struct Scope<'ctx> {
     pub name: String,
     pub block: BasicBlock<'ctx>,
-    pub variables: HashMap<String, ValueRef<'ctx>>,
+    pub variables: HashMap<String, Variable<'ctx>>,
 
     parent: Option<ScopeNode<'ctx>>,
     children: Vec<ScopeNode<'ctx>>,
@@ -85,5 +115,30 @@ impl<'ctx> Scope<'ctx> {
             parent,
             children: Vec::new(),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Variable<'ctx> {
+    Function(Rc<RefCell<Function<'ctx>>>),
+    Value(ValueRef<'ctx>),
+}
+
+#[derive(Debug)]
+pub struct Function<'ctx> {
+    pub body: ast::Function,
+    pub call_with: Vec<Vec<BasicTypeEnum<'ctx>>>,
+    pub definition: Vec<Closure<'ctx>>,
+    pub called: bool,
+}
+
+impl<'ctx> Function<'ctx> {
+    pub fn new(body: ast::Function) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self {
+            body,
+            call_with: Vec::new(),
+            definition: Vec::new(),
+            called: false,
+        }))
     }
 }

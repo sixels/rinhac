@@ -95,7 +95,6 @@ pub struct Compiler<'a, 'ctx> {
     pub function: Option<FunctionValue<'ctx>>,
     pub core_functions: EnumMap<CoreFunction, FunctionValue<'ctx>>,
     pub strings: HashMap<String, Str<'ctx>>,
-    pub functions: HashMap<String, Function<'ctx>>,
     pub scope: Scopes<'ctx>,
 }
 
@@ -122,7 +121,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             core_functions,
             strings: HashMap::new(),
             scope: Scopes::new(Scope::new("main", entry_block, None)),
-            functions: HashMap::new(),
         }
     }
 
@@ -197,15 +195,3 @@ impl From<CoreFunction> for &'static str {
         }
     }
 }
-
-pub struct Function<'ctx> {
-    pub name: String,
-    pub body: ast::Function,
-    pub funct: Option<FunctionValue<'ctx>>,
-}
-
-// impl Scope {
-//     pub fn enter(&self, name: &str) -> Option<BasicValueEnum> {
-//         self.variables.get(name).copied()
-//     }
-// }
