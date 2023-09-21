@@ -3,7 +3,7 @@ use std::rc::Rc;
 use inkwell::{
     attributes::Attribute,
     module::Linkage,
-    types::{BasicMetadataTypeEnum, PointerType},
+    types::{BasicMetadataTypeEnum, StructType},
     values::FunctionValue,
 };
 
@@ -21,12 +21,12 @@ use super::{Primitive, Str, Value, ValueType};
 #[derive(Debug, Clone, Copy)]
 pub struct Closure<'ctx> {
     pub funct: FunctionValue<'ctx>,
-    pub captures: Option<PointerType<'ctx>>,
+    pub captures: Option<StructType<'ctx>>,
     // pub returns: ReturnType<'ctx>,
 }
 
 impl<'ctx> Closure<'ctx> {
-    pub fn new(funct: FunctionValue<'ctx>, captures: Option<PointerType<'ctx>>) -> Self {
+    pub fn new(funct: FunctionValue<'ctx>, captures: Option<StructType<'ctx>>) -> Self {
         Self {
             funct,
             captures,
@@ -77,12 +77,9 @@ impl<'ctx> Closure<'ctx> {
                     .take(function.captured_variables.len())
                     .map(|t| t.into())
                     .collect::<Vec<_>>();
-            let captures = compiler
-                .context
-                .struct_type(&capture_fields, false)
-                .ptr_type(Default::default());
+            let captures = compiler.context.struct_type(&capture_fields, false);
 
-            param_metadata.insert(1, captures.into());
+            param_metadata.insert(1, captures.ptr_type(Default::default()).into());
 
             Some(captures)
         } else {
@@ -187,53 +184,67 @@ impl<'ctx> Closure<'ctx> {
                 )
             });
 
-        // todo: load captures and put them in current scope
         if self.captures.is_some() {
             let captures_ref = self.funct.get_nth_param(1).unwrap().into_pointer_value();
 
-            let first_capture = compiler
-                .builder
-                .build_load(
-                    match captured_values[0].0 {
-                        ValueType::Int => compiler.context.i32_type().ptr_type(Default::default()),
-                        ValueType::Bool => {
-                            compiler.context.bool_type().ptr_type(Default::default())
-                        }
-                        ValueType::Str(_) => {
-                            compiler.context.i8_type().ptr_type(Default::default())
-                        }
-                        _ => todo!(),
-                    },
-                    captures_ref,
-                    "",
-                )
-                .into_pointer_value();
+            for (n, (value_type, symbol)) in captured_values.iter().enumerate() {
+                let load_capture = if n == 0 {
+                    captures_ref
+                } else {
+                    let ptr = unsafe {
+                        compiler.builder.build_in_bounds_gep(
+                            self.captures.unwrap(),
+                            captures_ref,
+                            &[
+                                compiler.context.i32_type().const_int(0, false),
+                                compiler.context.i32_type().const_int(n as _, false),
+                            ],
+                            "",
+                        )
+                    };
 
-            let variable = match captured_values[0].0 {
-                ValueType::Int => Variable::Value(super::ValueRef::Primitive(
-                    super::PrimitiveRef::Int(first_capture),
-                )),
-                ValueType::Bool => Variable::Value(super::ValueRef::Primitive(
-                    super::PrimitiveRef::Bool(first_capture),
-                )),
-                ValueType::Str(len) => Variable::Value(super::ValueRef::Str(super::StrRef {
-                    ptr: first_capture,
-                    len,
-                })),
-                _ => todo!(),
-            };
+                    ptr
+                    // todo!()
+                };
 
-            println!("capturing: {}", captured_values[0].1);
-            compiler
-                .scope
-                .add_captured_variable(captured_values[0].1.clone(), variable);
+                let load_capture = compiler
+                    .builder
+                    .build_load(
+                        match value_type {
+                            ValueType::Int => {
+                                compiler.context.i32_type().ptr_type(Default::default())
+                            }
+                            ValueType::Bool => {
+                                compiler.context.bool_type().ptr_type(Default::default())
+                            }
+                            ValueType::Str(_) => {
+                                compiler.context.i8_type().ptr_type(Default::default())
+                            }
+                            ValueType::Closure(_) => todo!("closures are not captured yet"),
+                        },
+                        load_capture,
+                        "",
+                    )
+                    .into_pointer_value();
 
-            // self.captures.
-            // let captures = compiler
-            //     .builder
-            //     .build_load(captures, "captures")
-            //     .into_pointer_value();
-            // captures
+                let variable = match *value_type {
+                    ValueType::Int => Variable::Value(super::ValueRef::Primitive(
+                        super::PrimitiveRef::Int(load_capture),
+                    )),
+                    ValueType::Bool => Variable::Value(super::ValueRef::Primitive(
+                        super::PrimitiveRef::Bool(load_capture),
+                    )),
+                    ValueType::Str(len) => Variable::Value(super::ValueRef::Str(super::StrRef {
+                        ptr: load_capture,
+                        len,
+                    })),
+                    _ => todo!(),
+                };
+
+                compiler
+                    .scope
+                    .add_captured_variable(symbol.clone(), variable);
+            }
         }
 
         for (name, param) in params.into_iter() {

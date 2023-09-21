@@ -67,10 +67,7 @@ impl Codegen for ast::Var {
             .scope
             .find_variable(&self.text)
             .or_else(|| compiler.scope.find_captured_variable(&self.text))
-            .unwrap_or_else(|| {
-                // dbg!(&compiler.scope.borrow().function.funct.print_to_string());
-                panic!("Variable {} not defined", self.text)
-            });
+            .unwrap_or_else(|| panic!("Variable {} not defined", self.text));
 
         var.clone()
     }
@@ -316,7 +313,7 @@ impl Codegen for ast::Call {
                         .build_store(captured, var.get_ptr(compiler));
                 } else {
                     let ptr = unsafe {
-                        compiler.builder.build_gep(
+                        compiler.builder.build_in_bounds_gep(
                             captures,
                             captured,
                             &[

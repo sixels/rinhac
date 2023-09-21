@@ -1,20 +1,11 @@
 let foo = fn (a, b, c) => {    
-    let c2 = fn () => {
-        let c3 = fn () => {
-            let a = a + 2;
-            print(a)
-        };
-        c3()
-    };
-    let c1 = fn () =>{
-        c2()
+    let c1 = fn () => {
+        let x = 2 + a;
+        print((b == x) == c)
     };
     c1()
 };
 
-let bar = fn (x, b, c) => {
-    let c = 2 + c;
-    print((b == c) == x) 
-};
+
 
 foo(1+2, 5, true)
