@@ -2,14 +2,7 @@ pub mod enums;
 pub mod traits;
 pub mod value;
 
-use std::rc::Rc;
-
-use inkwell::{
-    attributes::Attribute,
-    module::Linkage,
-    types::BasicMetadataTypeEnum,
-    values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, PointerValue},
-};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, PointerValue};
 
 use crate::{
     ast,
@@ -73,7 +66,11 @@ impl Codegen for ast::Var {
         let var = compiler
             .scope
             .find_variable(&self.text)
-            .unwrap_or_else(|| panic!("Variable {} not defined", self.text));
+            .or_else(|| compiler.scope.find_captured_variable(&self.text))
+            .unwrap_or_else(|| {
+                // dbg!(&compiler.scope.borrow().function.funct.print_to_string());
+                panic!("Variable {} not defined", self.text)
+            });
 
         var.clone()
     }
@@ -103,56 +100,50 @@ impl Codegen for ast::Binary {
         let result = match (lhs_value, rhs_value) {
             (Value::Primitive(pl), Value::Primitive(pr)) => match (pl, pr) {
                 (Primitive::Int(l), Primitive::Int(r)) => match self.op {
-                    ast::BinaryOp::Add => {
-                        Primitive::Int(compiler.builder.build_int_add(l, r, "tmpadd"))
-                    }
-                    ast::BinaryOp::Sub => {
-                        Primitive::Int(compiler.builder.build_int_sub(l, r, "tmpsub"))
-                    }
-                    ast::BinaryOp::Mul => {
-                        Primitive::Int(compiler.builder.build_int_mul(l, r, "tmpmul"))
-                    }
+                    ast::BinaryOp::Add => Primitive::Int(compiler.builder.build_int_add(l, r, "")),
+                    ast::BinaryOp::Sub => Primitive::Int(compiler.builder.build_int_sub(l, r, "")),
+                    ast::BinaryOp::Mul => Primitive::Int(compiler.builder.build_int_mul(l, r, "")),
                     ast::BinaryOp::Div => {
-                        Primitive::Int(compiler.builder.build_int_signed_div(l, r, "tmpdiv"))
+                        Primitive::Int(compiler.builder.build_int_signed_div(l, r, ""))
                     }
                     ast::BinaryOp::Rem => {
-                        Primitive::Int(compiler.builder.build_int_signed_rem(l, r, "tmprem"))
+                        Primitive::Int(compiler.builder.build_int_signed_rem(l, r, ""))
                     }
                     ast::BinaryOp::Eq => Primitive::Bool(compiler.builder.build_int_compare(
                         inkwell::IntPredicate::EQ,
                         l,
                         r,
-                        "tmpeq",
+                        "",
                     )),
                     ast::BinaryOp::Neq => Primitive::Bool(compiler.builder.build_int_compare(
                         inkwell::IntPredicate::NE,
                         l,
                         r,
-                        "tmpneq",
+                        "",
                     )),
                     ast::BinaryOp::Lt => Primitive::Bool(compiler.builder.build_int_compare(
                         inkwell::IntPredicate::SLT,
                         l,
                         r,
-                        "tmplte",
+                        "",
                     )),
                     ast::BinaryOp::Lte => Primitive::Bool(compiler.builder.build_int_compare(
                         inkwell::IntPredicate::SLE,
                         l,
                         r,
-                        "tmplte",
+                        "",
                     )),
                     ast::BinaryOp::Gt => Primitive::Bool(compiler.builder.build_int_compare(
                         inkwell::IntPredicate::SGT,
                         l,
                         r,
-                        "tmpgte",
+                        "",
                     )),
                     ast::BinaryOp::Gte => Primitive::Bool(compiler.builder.build_int_compare(
                         inkwell::IntPredicate::SGE,
                         l,
                         r,
-                        "tmpgte",
+                        "",
                     )),
                     _ => panic!("invalid operation between terms"),
                 }
@@ -161,7 +152,7 @@ impl Codegen for ast::Binary {
                     ast::BinaryOp::Eq => {
                         compiler
                             .builder
-                            .build_int_compare(inkwell::IntPredicate::EQ, l, r, "tmpeq")
+                            .build_int_compare(inkwell::IntPredicate::EQ, l, r, "")
                     }
                     ast::BinaryOp::Neq => compiler.builder.build_int_compare(
                         inkwell::IntPredicate::NE,
@@ -169,8 +160,8 @@ impl Codegen for ast::Binary {
                         r,
                         "tmpneq",
                     ),
-                    ast::BinaryOp::And => compiler.builder.build_and(l, r, "tmpand"),
-                    ast::BinaryOp::Or => compiler.builder.build_or(l, r, "tmpor"),
+                    ast::BinaryOp::And => compiler.builder.build_and(l, r, ""),
+                    ast::BinaryOp::Or => compiler.builder.build_or(l, r, ""),
                     _ => panic!("type bool does not support the \"{:?}\" operation", self.op),
                 })
                 .into(),
@@ -206,7 +197,11 @@ impl Codegen for ast::Binary {
                 }
                 _ => todo!(),
             },
-            _ => todo!(),
+            _ => panic!(
+                "invalid operation with {:?} and {:?}",
+                lhs_value.get_known_type(),
+                rhs_value.get_known_type(),
+            ),
         };
         result
     }
@@ -257,12 +252,8 @@ impl Codegen for ast::Call {
             _ => panic!("invalid function call"),
         };
 
-        let Some(variable) = compiler.scope.find_variable(funct_name)  else {
+        let Some(funct) = compiler.scope.find_callable(funct_name)  else {
             panic!("function not found")
-        };
-
-        let Variable::Function(funct) = variable else {
-            panic!("variable {} is not callable", funct_name)
         };
 
         let mut resolve_value = |term: &ast::Term| -> Value<'_> {
@@ -294,110 +285,55 @@ impl Codegen for ast::Call {
         let closure = funct
             .borrow_mut()
             .get_or_insert_definition(&arguments_types, |funct_ref| {
-                // bad end: we need to create a new function
-
-                let param_names = funct_ref
-                    .body
-                    .parameters
-                    .iter()
-                    .map(|p| p.text.clone())
-                    .collect::<Vec<_>>();
-
-                let mut param_types = arguments
-                    .iter()
-                    .map(|param| BasicMetadataTypeEnum::from(param.get_type()))
-                    .collect::<Vec<_>>();
-
-                let funct_name_monomorphized = if arguments.len() == 1 {
-                    String::from(funct_name)
-                } else {
-                    format!(
-                        "{}_{}",
-                        funct_name,
-                        param_types
-                            .iter()
-                            .map(|pt| pt.to_string())
-                            .collect::<Vec<_>>()
-                            .join("_")
-                    )
-                };
-
-                param_types.insert(
-                    0,
-                    Enum::generic_type(compiler)
-                        .ptr_type(Default::default())
-                        .into(),
-                );
-
-                let signature = compiler.context.void_type().fn_type(&param_types, false);
-                let prototype = compiler.module.add_function(
-                    &funct_name_monomorphized,
-                    signature,
-                    Some(Linkage::Internal),
-                );
-
-                prototype.add_attribute(
-                    inkwell::attributes::AttributeLoc::Param(0),
-                    compiler.context.create_type_attribute(
-                        Attribute::get_named_enum_kind_id("sret"),
-                        Enum::generic_type(compiler).into(),
-                    ),
-                );
-                let closure = Closure::new(prototype);
-
-                let fn_block = compiler
-                    .context
-                    .append_basic_block(prototype, FIRST_BLOCK_NAME);
-
-                let param_values = closure
-                    .funct
-                    .get_param_iter()
-                    .skip(1)
-                    .zip(arguments.iter())
-                    .map(|(param, val)| match val {
-                        Value::Primitive(Primitive::Int(_)) => {
-                            Value::Primitive(Primitive::Int(param.into_int_value()))
-                        }
-                        Value::Primitive(Primitive::Bool(_)) => {
-                            Value::Primitive(Primitive::Bool(param.into_int_value()))
-                        }
-                        Value::Str(str) => {
-                            Value::Str(Str::new(param.into_pointer_value(), str.len))
-                        }
-                        Value::Closure(_) => todo!(),
-                    })
-                    .zip(param_names)
-                    .collect::<Vec<(Value, String)>>();
-
-                let closure_scope = funct_ref
-                    .definition_scope
-                    .create_child(fn_block, Some(closure));
-                let call_scope = Rc::clone(&compiler.scope);
-
-                compiler.scope.clone_from(&closure_scope);
-                compiler
-                    .builder
-                    .position_at_end(closure_scope.borrow().block);
-
-                let function_body = &funct_ref.body.value;
-                closure.build_definition(compiler, param_values, function_body);
-
-                compiler.scope.clone_from(&call_scope);
-                compiler.builder.position_at_end(call_scope.borrow().block);
-
-                closure
+                Closure::build_definition(compiler, funct_ref, &arguments)
             });
 
-        // happy end: we already defined this function for the given argument types
         let mut args = arguments
             .iter()
             .map(|arg| BasicValueEnum::from(arg).into())
             .collect::<Vec<BasicMetadataValueEnum>>();
 
+        // add sret to arguments
         let sret = compiler
             .builder
             .build_alloca(Enum::generic_type(compiler), "");
         args.insert(0, sret.into());
+
+        // add captures to arguments
+        if let Some(captures) = closure.captures {
+            let funct_ref = funct.borrow();
+
+            let captured = compiler.builder.build_alloca(captures, "cap");
+
+            for (n, (_, s)) in funct_ref.captured_variables.iter().enumerate() {
+                let Some(var) =  compiler.scope.find_variable(s).or_else(|| compiler.scope.find_captured_variable(s)) else {
+                    panic!("variable {s} not found")
+                };
+
+                if n == 0 {
+                    compiler
+                        .builder
+                        .build_store(captured, var.get_ptr(compiler));
+                } else {
+                    let ptr = unsafe {
+                        compiler.builder.build_gep(
+                            captures,
+                            captured,
+                            &[
+                                compiler.context.i32_type().const_int(0, false),
+                                compiler.context.i32_type().const_int(n as _, false),
+                            ],
+                            "",
+                        )
+                    };
+                    compiler.builder.build_store(ptr, var.get_ptr(compiler));
+                };
+            }
+
+            // let capture_names = &funct_ref.captures;
+            // compiler.scope.find_variable(name)
+            args.insert(1, captured.into());
+        }
 
         compiler.builder.build_direct_call(closure.funct, &args, "");
 
@@ -415,10 +351,31 @@ impl Codegen for ast::Let {
             ast::Term::Str(s) => Value::Str(s.codegen(compiler)),
             ast::Term::Binary(b) => b.codegen(compiler),
             ast::Term::Function(f) => {
-                let funct = Variable::Function(Function::new(f.clone(), &compiler.scope));
+                let captures = Function::check_captures(&compiler.scope, f);
+                let mut captured_variables = Vec::with_capacity(captures.len());
+                for symbol in captures {
+                    let var = compiler
+                        .scope
+                        .find_variable(&symbol)
+                        .or_else(|| compiler.scope.find_captured_variable(&symbol))
+                        .unwrap_or_else(|| panic!("variable {} not defined", symbol));
+                    captured_variables.push((var.get_known_type(), String::from(symbol)));
+                }
+
+                let funct = Variable::Function(Function::new(
+                    self.name.text.clone(),
+                    f.clone(),
+                    &compiler.scope,
+                    captured_variables,
+                ));
                 compiler.scope.add_variable(&self.name.text, funct.clone());
                 return funct;
             }
+            ast::Term::Var(v) => match v.codegen(compiler) {
+                Variable::Value(v) => v.build_deref(compiler),
+                Variable::Constant(c) => c,
+                Variable::Function(_) => todo!(),
+            },
             _ => unimplemented!(),
         };
 

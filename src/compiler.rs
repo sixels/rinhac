@@ -115,7 +115,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let entry_block = context.append_basic_block(main_prototype, FIRST_BLOCK_NAME);
         builder.position_at_end(entry_block);
 
-        let scope = Scope::new(entry_block, Closure::new(main_prototype), None);
+        let scope = Scope::new(entry_block, Closure::new(main_prototype, None), None);
         Self {
             context,
             module,

@@ -1,23 +1,34 @@
+pub mod closure;
+
 use inkwell::{
-    types::BasicTypeEnum,
-    values::{BasicValueEnum, FunctionValue, IntValue, PointerValue},
+    context::Context,
+    types::{BasicTypeEnum, PointerType},
+    values::{BasicValueEnum, IntValue, PointerValue},
 };
 
-use crate::{
-    ast,
-    compiler::{
-        environment::{ScopeNode, ScopeRc, Variable},
-        Compiler,
-    },
-};
+use crate::compiler::Compiler;
 
-use super::traits::{Codegen, DerefValue};
+use super::traits::DerefValue;
 
-pub enum ValueType {
+pub use closure::Closure;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ValueType<'ctx> {
     Int,
     Bool,
-    Str,
-    Closure,
+    Str(IntValue<'ctx>),
+    Closure(PointerType<'ctx>),
+}
+
+impl<'ctx> ValueType<'ctx> {
+    fn as_basic_type(self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
+        match self {
+            Self::Int => ctx.i32_type().into(),
+            Self::Bool => ctx.bool_type().into(),
+            Self::Str(_) => ctx.i8_type().ptr_type(Default::default()).into(),
+            Self::Closure(t) => t.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,90 +75,6 @@ pub struct StrRef<'ctx> {
     pub len: IntValue<'ctx>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Closure<'ctx> {
-    pub funct: FunctionValue<'ctx>,
-    // pub returns: ReturnType<'ctx>,
-}
-
-impl<'ctx> Closure<'ctx> {
-    pub fn new(funct: FunctionValue<'ctx>) -> Self {
-        Self {
-            funct,
-            // returns: ReturnType::new(),
-        }
-    }
-    pub fn build_load(&self, _compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
-        todo!()
-    }
-
-    pub(crate) fn build_definition(
-        &self,
-        compiler: &mut Compiler<'_, 'ctx>,
-        params: Vec<(Value<'ctx>, String)>,
-        body: &ast::Term,
-    ) {
-        // put parameters in current scope
-        let params = self
-            .funct
-            .get_param_iter()
-            .skip(1)
-            .zip(params.into_iter())
-            .map(|(param, (val, name))| {
-                (
-                    name,
-                    match val {
-                        Value::Primitive(Primitive::Int(_)) => {
-                            Variable::Constant(Primitive::Int(param.into_int_value()).into())
-                        }
-                        Value::Primitive(Primitive::Bool(_)) => {
-                            Variable::Constant(Primitive::Bool(param.into_int_value()).into())
-                        }
-                        Value::Str(str) => Variable::Constant(Value::Str(Str::new(
-                            param.into_pointer_value(),
-                            str.len,
-                        ))),
-                        Value::Closure(_) => todo!(),
-                    },
-                )
-            });
-
-        for (name, param) in params.into_iter() {
-            compiler.scope.add_variable(name, param);
-        }
-
-        let mut next = Some(body);
-        while let Some(term) = next {
-            next = match term {
-                ast::Term::Print(print) => {
-                    print.codegen(compiler);
-                    None
-                }
-                ast::Term::Let(binding) => {
-                    binding.codegen(compiler);
-                    Some(&binding.next)
-                }
-
-                ast::Term::Call(call) => {
-                    call.codegen(compiler);
-                    None
-                }
-
-                // ignore top-level values for now
-                ast::Term::Var(..)
-                | ast::Term::Tuple(..)
-                | ast::Term::Binary(..)
-                | ast::Term::Bool(..)
-                | ast::Term::Int(..)
-                | ast::Term::Str(..) => None,
-                _ => todo!(),
-            };
-        }
-
-        compiler.builder.build_return(None);
-    }
-}
-
 impl<'ctx> Value<'ctx> {
     pub fn get_type(&self) -> BasicTypeEnum<'ctx> {
         match self {
@@ -162,6 +89,19 @@ impl<'ctx> Value<'ctx> {
                 .as_pointer_value()
                 .get_type()
                 .into(),
+        }
+    }
+
+    pub fn get_known_type(&self) -> ValueType<'ctx> {
+        match self {
+            Value::Primitive(primitive) => match primitive {
+                Primitive::Int(_) => ValueType::Int,
+                Primitive::Bool(_) => ValueType::Bool,
+            },
+            Value::Str(str) => ValueType::Str(str.len),
+            Value::Closure(c) => {
+                ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
+            }
         }
     }
 
@@ -180,6 +120,37 @@ impl<'ctx> Value<'ctx> {
     }
 }
 
+impl<'ctx> ValueRef<'ctx> {
+    pub fn get_type(&self) -> BasicTypeEnum<'ctx> {
+        match self {
+            Self::Primitive(primitive) => match primitive {
+                PrimitiveRef::Int(i) => i.get_type().into(),
+                PrimitiveRef::Bool(b) => b.get_type().into(),
+            },
+            Self::Str(str) => str.ptr.get_type().into(),
+            Self::Closure(closure) => closure
+                .funct
+                .as_global_value()
+                .as_pointer_value()
+                .get_type()
+                .into(),
+        }
+    }
+
+    pub fn get_known_type(&self) -> ValueType<'ctx> {
+        match self {
+            Self::Primitive(primitive) => match primitive {
+                PrimitiveRef::Int(_) => ValueType::Int,
+                PrimitiveRef::Bool(_) => ValueType::Bool,
+            },
+            Self::Str(str) => ValueType::Str(str.len),
+            Self::Closure(c) => {
+                ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
+            }
+        }
+    }
+}
+
 impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {
     type R = Value<'ctx>;
     fn build_deref(&self, compiler: &Compiler<'_, 'ctx>) -> Self::R {
@@ -188,7 +159,7 @@ impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {
             Self::Str(str) => Str::new(
                 compiler
                     .builder
-                    .build_load(str.ptr.get_type(), str.ptr, "tmploadstr")
+                    .build_load(str.ptr.get_type(), str.ptr, "")
                     .into_pointer_value(),
                 str.len,
             )
@@ -205,13 +176,13 @@ impl<'ctx> DerefValue<'ctx> for PrimitiveRef<'ctx> {
             Self::Bool(bool_ref) => Primitive::Bool(
                 compiler
                     .builder
-                    .build_load(compiler.context.bool_type(), *bool_ref, "tmploadbool")
+                    .build_load(compiler.context.bool_type(), *bool_ref, "")
                     .into_int_value(),
             ),
             Self::Int(int_ref) => Primitive::Int(
                 compiler
                     .builder
-                    .build_load(compiler.context.i32_type(), *int_ref, "tmploadint")
+                    .build_load(compiler.context.i32_type(), *int_ref, "")
                     .into_int_value(),
             ),
         }
@@ -224,7 +195,7 @@ impl<'ctx> DerefValue<'ctx> for StrRef<'ctx> {
         Str::new(
             compiler
                 .builder
-                .build_load(self.ptr.get_type(), self.ptr, "tmploadstr")
+                .build_load(self.ptr.get_type(), self.ptr, "")
                 .into_pointer_value(),
             self.len,
         )
