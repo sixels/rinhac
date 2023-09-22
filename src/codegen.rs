@@ -2,6 +2,8 @@ pub mod enums;
 pub mod traits;
 pub mod value;
 
+use std::rc::Rc;
+
 use inkwell::values::{
     AnyValue, BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, PointerValue,
 };
@@ -16,11 +18,28 @@ use crate::{
 };
 
 use self::{
-    traits::{Codegen, DerefValue},
+    traits::{Codegen, CodegenValue, DerefValue},
     value::{closure::build_captures_struct, Primitive, Str, Value},
 };
 
 pub const FIRST_BLOCK_NAME: &str = "start";
+
+impl CodegenValue for ast::Term {
+    fn codegen_value<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Option<Value<'ctx>> {
+        match self {
+            ast::Term::Int(i) => Some(i.codegen(compiler).into()),
+            ast::Term::Bool(b) => Some(b.codegen(compiler).into()),
+            ast::Term::Binary(b) => Some(b.codegen(compiler)),
+            ast::Term::Var(v) => match v.codegen(compiler) {
+                Variable::Value(v) => Some(v.build_deref(compiler)),
+                Variable::Constant(c) => Some(c),
+                Variable::Function(_) => None,
+            },
+            ast::Term::Str(s) => Some(s.codegen(compiler).into()),
+            _ => None,
+        }
+    }
+}
 
 impl Codegen for ast::Int {
     type R<'ctx> = Primitive<'ctx>;
@@ -78,23 +97,8 @@ impl Codegen for ast::Var {
 impl Codegen for ast::Binary {
     type R<'ctx> = Value<'ctx>;
     fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
-        let mut resolve_value = |term: &ast::Term| -> Value<'_> {
-            match term {
-                ast::Term::Int(i) => i.codegen(compiler).into(),
-                ast::Term::Bool(b) => b.codegen(compiler).into(),
-                ast::Term::Binary(b) => b.codegen(compiler),
-                ast::Term::Var(v) => match v.codegen(compiler) {
-                    Variable::Value(v) => v.build_deref(compiler),
-                    Variable::Constant(c) => c,
-                    Variable::Function(_) => panic!("can't perform operations on functions"),
-                },
-                ast::Term::Str(s) => s.codegen(compiler).into(),
-                _ => unimplemented!(),
-            }
-        };
-
-        let lhs_value = resolve_value(&self.lhs);
-        let rhs_value = resolve_value(&self.rhs);
+        let lhs_value = self.lhs.codegen_value(compiler).unwrap();
+        let rhs_value = self.rhs.codegen_value(compiler).unwrap();
 
         let result = match (lhs_value, rhs_value) {
             (Value::Primitive(pl), Value::Primitive(pr)) => match (pl, pr) {
@@ -303,25 +307,10 @@ impl Codegen for ast::Call {
             panic!("function not found")
         };
 
-        let mut resolve_value = |term: &ast::Term| -> Value<'_> {
-            match term {
-                ast::Term::Int(i) => i.codegen(compiler).into(),
-                ast::Term::Bool(b) => b.codegen(compiler).into(),
-                ast::Term::Binary(b) => b.codegen(compiler),
-                ast::Term::Var(v) => match v.codegen(compiler) {
-                    Variable::Value(v) => v.build_deref(compiler),
-                    Variable::Constant(c) => c,
-                    Variable::Function(_) => panic!("can't perform operations on functions"),
-                },
-                ast::Term::Str(s) => s.codegen(compiler).into(),
-                _ => unimplemented!(),
-            }
-        };
-
         let arguments = self
             .arguments
             .iter()
-            .map(|arg| resolve_value(arg))
+            .map(|arg| arg.codegen_value(compiler).unwrap())
             .collect::<Vec<_>>();
 
         let arguments_types = arguments
@@ -483,5 +472,42 @@ impl Codegen for ast::Let {
             .add_variable(&self.name.text, Variable::Value(variable));
 
         Variable::Value(variable)
+    }
+}
+
+impl Codegen for ast::If {
+    type R<'ctx> = ();
+    fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
+        let Value::Primitive(Primitive::Bool(condition)) = self.condition.codegen_value(compiler).unwrap() else {
+            panic!("if condition must be a boolean")
+        };
+        let function = { compiler.scope.borrow().function };
+
+        let then_block = compiler.context.append_basic_block(function.funct, "then");
+        let else_block = compiler.context.append_basic_block(function.funct, "else");
+        let merge_block = compiler.context.append_basic_block(function.funct, "merge");
+
+        let merge_scope = Rc::clone(&compiler.scope);
+
+        compiler
+            .builder
+            .build_conditional_branch(condition, then_block, else_block);
+
+        compiler.builder.position_at_end(then_block);
+        let then_scope = compiler.scope.create_child(then_block, None);
+        compiler.scope.clone_from(&then_scope);
+
+        let _then_ret = compiler.compile(&self.then);
+        compiler.builder.build_unconditional_branch(merge_block);
+
+        compiler.builder.position_at_end(else_block);
+        let else_scope = compiler.scope.create_child(else_block, None);
+        compiler.scope.clone_from(&else_scope);
+
+        let _else_ret = compiler.compile(&self.otherwise);
+        compiler.builder.build_unconditional_branch(merge_block);
+
+        compiler.builder.position_at_end(merge_block);
+        compiler.scope.clone_from(&merge_scope);
     }
 }

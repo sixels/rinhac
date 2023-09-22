@@ -172,8 +172,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 None
             }
 
+            ast::Term::If(conditional) => {
+                conditional.codegen(self);
+                None
+            }
+
             // ignore top-level values for now
-            ast::Term::Var(..)
+            ast::Term::Var(_)
             | ast::Term::Tuple(..)
             | ast::Term::Binary(..)
             | ast::Term::Bool(..)
