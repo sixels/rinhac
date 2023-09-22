@@ -368,12 +368,6 @@ impl<'ctx> FunctionDefinition<'ctx> {
     }
 }
 
-#[derive(Debug)]
-pub struct CapturedVarMetadata<'ctx> {
-    pub symbol: String,
-    pub known_type: ValueType<'ctx>,
-}
-
 impl<'ctx> Drop for Scope<'ctx> {
     fn drop(&mut self) {
         println!("Dropping scope: {}", self.name);
