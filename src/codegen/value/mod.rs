@@ -1,5 +1,7 @@
 pub mod closure;
 
+use std::fmt::Display;
+
 use inkwell::{
     context::Context,
     types::{BasicTypeEnum, PointerType},
@@ -232,6 +234,17 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
             Value::Primitive(primitive) => primitive.into(),
             Value::Str(str) => str.ptr.into(),
             Value::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
+        }
+    }
+}
+
+impl<'ctx> Display for ValueType<'ctx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValueType::Int => write!(f, "int"),
+            ValueType::Bool => write!(f, "bool"),
+            ValueType::Str(_) => write!(f, "str"),
+            ValueType::Closure(_) => write!(f, "closure"),
         }
     }
 }

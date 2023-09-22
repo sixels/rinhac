@@ -144,7 +144,7 @@ impl Codegen for ast::Binary {
                         r,
                         "",
                     )),
-                    _ => panic!("invalid operation between terms"),
+                    _ => panic!("invalid operation between numbers"),
                 }
                 .into(),
                 (Primitive::Bool(l), Primitive::Bool(r)) => Primitive::Bool(match self.op {
@@ -161,7 +161,7 @@ impl Codegen for ast::Binary {
                     ),
                     ast::BinaryOp::And => compiler.builder.build_and(l, r, ""),
                     ast::BinaryOp::Or => compiler.builder.build_or(l, r, ""),
-                    _ => panic!("type bool does not support the \"{:?}\" operation", self.op),
+                    _ => panic!("invalid operation between booleans"),
                 })
                 .into(),
                 (_l, _r) => panic!("bool and int operations are not allowed"),
@@ -221,7 +221,7 @@ impl Codegen for ast::Binary {
                 append_str(compiler, l, r).into()
             }
             _ => panic!(
-                "invalid operation between {:?} and {:?}",
+                "invalid operation between {} and {}",
                 lhs_value.get_known_type(),
                 rhs_value.get_known_type(),
             ),
