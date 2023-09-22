@@ -171,7 +171,8 @@ impl<'ctx> Closure<'ctx> {
                 };
 
                 match capture {
-                    Capture::Direct { symbol, known_type } => {
+                    Capture::Direct { symbol, variable } => {
+                        let known_type = variable.get_known_type();
                         let load_capture = compiler
                             .builder
                             .build_load(
@@ -194,7 +195,7 @@ impl<'ctx> Closure<'ctx> {
                             )
                             .into_pointer_value();
 
-                        let variable = match *known_type {
+                        let variable = match known_type {
                             ValueType::Int => Variable::Value(super::ValueRef::Primitive(
                                 super::PrimitiveRef::Int(load_capture),
                             )),

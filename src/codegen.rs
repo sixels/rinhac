@@ -371,12 +371,7 @@ fn build_capture_args<'ctx>(
 ) {
     for (n, capture) in funct_ref.captured_variables.iter().enumerate() {
         let value_ptr = match capture {
-            Capture::Direct { symbol, .. } => {
-                let Some(var) =  compiler.scope.find_variable(symbol).or_else(|| compiler.scope.find_captured_variable(symbol)) else {
-                    panic!("variable {symbol} not found")
-                };
-                var.get_ptr(compiler)
-            }
+            Capture::Direct { variable, .. } => variable.get_ptr(compiler),
 
             Capture::Indirect { function, .. } => {
                 let funct_indi_ref = function.borrow();
@@ -433,8 +428,13 @@ impl Codegen for ast::Let {
                     .into_iter()
                     .map(|dc| {
                         let var = compiler.scope.find_any_variable(dc).unwrap();
+                        let var = if let Variable::Value(v) = var {
+                            Variable::Value(v.cloned(compiler))
+                        } else {
+                            var
+                        };
 
-                        Capture::direct(dc, var.get_known_type())
+                        Capture::direct(dc, var)
                     })
                     .chain(indirect_captures.into_keys().map(|name| {
                         let funct = compiler.scope.find_callable(&name).unwrap();

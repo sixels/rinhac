@@ -151,6 +151,10 @@ impl<'ctx> ValueRef<'ctx> {
             }
         }
     }
+
+    pub fn cloned(&self, compiler: &Compiler<'_, 'ctx>) -> Self {
+        self.build_deref(compiler).build_variable(compiler, "_")
+    }
 }
 
 impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {

@@ -378,7 +378,7 @@ impl<'ctx> Drop for Scope<'ctx> {
 pub enum Capture<'ctx> {
     Direct {
         symbol: String,
-        known_type: ValueType<'ctx>,
+        variable: Variable<'ctx>,
     },
     Indirect {
         symbol: String,
@@ -386,10 +386,10 @@ pub enum Capture<'ctx> {
     },
 }
 impl<'ctx> Capture<'ctx> {
-    pub fn direct(symbol: impl Into<String>, known_type: ValueType<'ctx>) -> Self {
+    pub fn direct(symbol: impl Into<String>, variable: Variable<'ctx>) -> Self {
         Self::Direct {
             symbol: symbol.into(),
-            known_type,
+            variable,
         }
     }
     pub fn indirect(symbol: String, function: Rc<RefCell<Function<'ctx>>>) -> Self {
