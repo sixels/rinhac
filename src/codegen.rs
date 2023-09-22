@@ -168,7 +168,31 @@ impl Codegen for ast::Binary {
             },
             (Value::Str(l), Value::Str(r)) => match self.op {
                 ast::BinaryOp::Add => append_str(compiler, l, r).into(),
-                _ => todo!(),
+                ast::BinaryOp::Eq => Primitive::Bool(if l.len != r.len {
+                    compiler.context.bool_type().const_int(0 as _, false)
+                } else {
+                    let result = compiler.builder.build_call(
+                        compiler.core_functions[CoreFunction::MemCmp],
+                        &[l.ptr.into(), r.ptr.into(), l.len.into()],
+                        "",
+                    );
+                    result.as_any_value_enum().into_int_value()
+                })
+                .into(),
+                ast::BinaryOp::Neq => Primitive::Bool(if l.len != r.len {
+                    compiler.context.bool_type().const_int(1 as _, false)
+                } else {
+                    let result = compiler.builder.build_call(
+                        compiler.core_functions[CoreFunction::MemCmp],
+                        &[l.ptr.into(), r.ptr.into(), l.len.into()],
+                        "",
+                    );
+                    compiler
+                        .builder
+                        .build_int_neg(result.as_any_value_enum().into_int_value(), "")
+                })
+                .into(),
+                _ => panic!("invalid operation between strings"),
             },
             (Value::Str(string), Value::Primitive(Primitive::Int(number)))
             | (Value::Primitive(Primitive::Int(number)), Value::Str(string))
