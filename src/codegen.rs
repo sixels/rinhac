@@ -12,7 +12,7 @@ use crate::{
     ast,
     codegen::{enums::Enum, value::Closure},
     compiler::{
-        environment::{Capture, Function, ScopeNode, Variable},
+        environment::{find_captures, Capture, Function, ScopeNode, Variable},
         Compiler, CoreFunction,
     },
 };
@@ -421,8 +421,7 @@ impl Codegen for ast::Let {
             ast::Term::Str(s) => Value::Str(s.codegen(compiler)),
             ast::Term::Binary(b) => b.codegen(compiler),
             ast::Term::Function(f) => {
-                let (direct_captures, indirect_captures) =
-                    Function::captured_environment(&compiler.scope, f);
+                let (direct_captures, indirect_captures) = find_captures(f);
 
                 let captured_variables = direct_captures
                     .into_iter()
@@ -436,7 +435,7 @@ impl Codegen for ast::Let {
 
                         Capture::direct(dc, var)
                     })
-                    .chain(indirect_captures.into_keys().map(|name| {
+                    .chain(indirect_captures.into_iter().map(|name| {
                         let funct = compiler.scope.find_callable(&name).unwrap();
                         let name = {
                             let funct_ref = &funct.borrow();

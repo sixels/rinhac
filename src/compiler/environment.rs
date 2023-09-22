@@ -221,112 +221,6 @@ impl<'ctx> Function<'ctx> {
         }
     }
 
-    pub(crate) fn captured_environment<'a>(
-        scope: &ScopeRc<'ctx>,
-        fn_ast: &'a ast::Function,
-    ) -> (HashSet<&'a str>, BTreeMap<String, Vec<Capture<'ctx>>>) {
-        let environ = fn_ast
-            .parameters
-            .iter()
-            .map(|param| param.text.as_str())
-            .collect::<HashSet<&'a str>>();
-
-        let mut direct_captures = HashSet::new();
-        let mut indirect_captures = BTreeMap::new();
-        let mut captures = (&mut direct_captures, &mut indirect_captures);
-
-        Self::check_captures_with_env(&mut captures, scope, &environ, &fn_ast.value);
-        (direct_captures, indirect_captures)
-    }
-
-    fn check_captures_with_env<'a>(
-        captures: &mut (
-            &mut HashSet<&'a str>,
-            &mut BTreeMap<String, Vec<Capture<'ctx>>>,
-        ),
-        scope: &ScopeRc<'ctx>,
-        parent_env: &HashSet<&'a str>,
-        term: &'a ast::Term,
-    ) -> HashSet<&'a str> {
-        let mut environ = parent_env.clone();
-
-        let mut current = Some(term);
-        while let Some(term) = current {
-            current = match term {
-                ast::Term::Let(l) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &l.value);
-                    environ.insert(l.name.text.as_str());
-                    Some(&l.next)
-                }
-                ast::Term::Var(v) => {
-                    if !environ.contains(v.text.as_str()) {
-                        captures.0.insert(v.text.as_str());
-                    }
-                    None
-                }
-                ast::Term::Call(c) => {
-                    if let ast::Term::Var(v) = c.callee.as_ref() {
-                        if !captures.0.contains(v.text.as_str()) {
-                            if let Some(callable) = scope.find_callable(&v.text) {
-                                let callable_ref = callable.borrow();
-
-                                captures.1.insert(
-                                    v.text.clone(),
-                                    callable_ref.captured_variables.clone(),
-                                );
-                            }
-                        }
-                    }
-
-                    for arg in c.arguments.iter() {
-                        Self::check_captures_with_env(captures, scope, &environ, arg);
-                    }
-                    None
-                }
-                ast::Term::Binary(b) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &b.lhs);
-                    Self::check_captures_with_env(captures, scope, &environ, &b.rhs);
-                    None
-                }
-                ast::Term::If(i) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &i.then);
-                    Self::check_captures_with_env(captures, scope, &environ, &i.otherwise);
-                    None
-                }
-                ast::Term::First(f) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &f.value);
-                    None
-                }
-                ast::Term::Second(s) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &s.value);
-                    None
-                }
-                ast::Term::Print(p) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &p.value);
-                    None
-                }
-                ast::Term::Tuple(t) => {
-                    Self::check_captures_with_env(captures, scope, &environ, &t.first);
-                    Self::check_captures_with_env(captures, scope, &environ, &t.second);
-                    None
-                }
-                ast::Term::Function(a) => {
-                    let mut fn_env = a
-                        .parameters
-                        .iter()
-                        .map(|param| param.text.as_str())
-                        .collect::<HashSet<&'a str>>();
-                    fn_env.extend(&environ);
-                    Self::check_captures_with_env(captures, scope, &fn_env, &a.value);
-                    None
-                }
-                _ => None,
-            }
-        }
-
-        environ
-    }
-
     pub fn monomorph_name(&self, params: impl Iterator<Item = ValueType<'ctx>>) -> String {
         format!(
             "{}${}",
@@ -345,6 +239,98 @@ impl<'ctx> Function<'ctx> {
     pub fn unique_name(&self) -> String {
         format!("{}_{}", self.definition_scope.borrow().name, self.name)
     }
+}
+
+pub fn find_captures<'a>(fn_ast: &'a ast::Function) -> (HashSet<&'a str>, HashSet<String>) {
+    let environ = fn_ast
+        .parameters
+        .iter()
+        .map(|param| param.text.as_str())
+        .collect::<HashSet<&'a str>>();
+
+    let mut direct_captures = HashSet::new();
+    let mut indirect_captures = HashSet::new();
+    let mut captures = (&mut direct_captures, &mut indirect_captures);
+
+    find_captures_with_env(&mut captures, &environ, &fn_ast.value);
+    (direct_captures, indirect_captures)
+}
+
+fn find_captures_with_env<'a>(
+    captures: &mut (&mut HashSet<&'a str>, &mut HashSet<String>),
+    parent_env: &HashSet<&'a str>,
+    term: &'a ast::Term,
+) -> HashSet<&'a str> {
+    let mut environ = parent_env.clone();
+
+    let mut current = Some(term);
+    while let Some(term) = current {
+        current = match term {
+            ast::Term::Let(l) => {
+                find_captures_with_env(captures, &environ, &l.value);
+                environ.insert(l.name.text.as_str());
+                Some(&l.next)
+            }
+            ast::Term::Var(v) => {
+                if !environ.contains(v.text.as_str()) {
+                    captures.0.insert(v.text.as_str());
+                }
+                None
+            }
+            ast::Term::Call(c) => {
+                if let ast::Term::Var(v) = c.callee.as_ref() {
+                    if !captures.0.contains(v.text.as_str()) {
+                        captures.1.insert(v.text.clone());
+                    }
+                }
+
+                for arg in c.arguments.iter() {
+                    find_captures_with_env(captures, &environ, arg);
+                }
+                None
+            }
+            ast::Term::Binary(b) => {
+                find_captures_with_env(captures, &environ, &b.lhs);
+                find_captures_with_env(captures, &environ, &b.rhs);
+                None
+            }
+            ast::Term::If(i) => {
+                find_captures_with_env(captures, &environ, &i.then);
+                find_captures_with_env(captures, &environ, &i.otherwise);
+                None
+            }
+            ast::Term::First(f) => {
+                find_captures_with_env(captures, &environ, &f.value);
+                None
+            }
+            ast::Term::Second(s) => {
+                find_captures_with_env(captures, &environ, &s.value);
+                None
+            }
+            ast::Term::Print(p) => {
+                find_captures_with_env(captures, &environ, &p.value);
+                None
+            }
+            ast::Term::Tuple(t) => {
+                find_captures_with_env(captures, &environ, &t.first);
+                find_captures_with_env(captures, &environ, &t.second);
+                None
+            }
+            ast::Term::Function(a) => {
+                let mut fn_env = a
+                    .parameters
+                    .iter()
+                    .map(|param| param.text.as_str())
+                    .collect::<HashSet<&'a str>>();
+                fn_env.extend(&environ);
+                find_captures_with_env(captures, &fn_env, &a.value);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    environ
 }
 
 #[derive(Debug)]
