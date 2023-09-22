@@ -2,7 +2,9 @@ pub mod enums;
 pub mod traits;
 pub mod value;
 
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, PointerValue};
+use inkwell::values::{
+    AnyValue, BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, PointerValue,
+};
 
 use crate::{
     ast,
@@ -165,43 +167,67 @@ impl Codegen for ast::Binary {
                 (_l, _r) => panic!("bool and int operations are not allowed"),
             },
             (Value::Str(l), Value::Str(r)) => match self.op {
-                ast::BinaryOp::Add => {
-                    let size = l.len.const_add(r.len);
-                    let new_str =
-                        compiler
-                            .builder
-                            .build_array_alloca(compiler.context.i8_type(), size, "");
-
-                    compiler
-                        .builder
-                        .build_memcpy(new_str, 1, l.ptr, 1, l.len)
-                        .unwrap();
-                    // safety: we just allocated the right amount of memory
-                    let new_str_tail = unsafe {
-                        compiler.builder.build_gep(
-                            compiler.context.i8_type(),
-                            new_str,
-                            &[l.len],
-                            "",
-                        )
-                    };
-                    compiler
-                        .builder
-                        .build_memcpy(new_str_tail, 1, r.ptr, 1, r.len)
-                        .unwrap();
-
-                    Str::new(new_str, size).into()
-                }
+                ast::BinaryOp::Add => append_str(compiler, l, r).into(),
                 _ => todo!(),
             },
+            (Value::Str(string), Value::Primitive(Primitive::Int(number)))
+            | (Value::Primitive(Primitive::Int(number)), Value::Str(string))
+                if matches!(self.op, ast::BinaryOp::Add) =>
+            {
+                let number_buf = compiler
+                    .builder
+                    .build_alloca(compiler.context.i8_type().ptr_type(Default::default()), "");
+                let number_len = compiler
+                    .builder
+                    .build_call(
+                        compiler.core_functions[CoreFunction::FmtInt],
+                        &[number_buf.into(), number.into()],
+                        "",
+                    )
+                    .as_any_value_enum()
+                    .into_int_value();
+
+                let number_str = Str::new(number_buf, number_len);
+                let (l, r) = if matches!(lhs_value, Value::Str(_)) {
+                    (string, number_str)
+                } else {
+                    (number_str, string)
+                };
+
+                append_str(compiler, l, r).into()
+            }
             _ => panic!(
-                "invalid operation with {:?} and {:?}",
+                "invalid operation between {:?} and {:?}",
                 lhs_value.get_known_type(),
                 rhs_value.get_known_type(),
             ),
         };
         result
     }
+}
+
+fn append_str<'ctx>(compiler: &mut Compiler<'_, 'ctx>, l: Str<'ctx>, r: Str<'ctx>) -> Str<'ctx> {
+    let size = r.len.const_add(l.len);
+    let append_buf = compiler
+        .builder
+        .build_array_alloca(compiler.context.i8_type(), size, "");
+
+    compiler
+        .builder
+        .build_memcpy(append_buf, 1, l.ptr, 1, l.len)
+        .unwrap();
+    // safety: we just allocated the right amount of memory
+    let new_str_tail = unsafe {
+        compiler
+            .builder
+            .build_gep(compiler.context.i8_type(), append_buf, &[l.len], "")
+    };
+    compiler
+        .builder
+        .build_memcpy(new_str_tail, 1, r.ptr, 1, r.len)
+        .unwrap();
+
+    Str::new(append_buf, size)
 }
 
 impl Codegen for ast::Print {

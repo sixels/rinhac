@@ -83,10 +83,24 @@ impl Rinhac {
             Some(Linkage::External),
         );
 
+        let fmt_int_type = context.i32_type().fn_type(
+            &[
+                context.i8_type().ptr_type(Default::default()).into(),
+                context.i32_type().into(),
+            ],
+            false,
+        );
+        let fmt_int_prototype = module.add_function(
+            CoreFunction::FmtInt.into(),
+            fmt_int_type,
+            Some(Linkage::External),
+        );
+
         enum_map::enum_map! {
             CoreFunction::PrintStr => print_str_prototype,
             CoreFunction::PrintInt => print_int_prototype,
             CoreFunction::PrintBool => print_bool_prototype,
+            CoreFunction::FmtInt => fmt_int_prototype,
         }
     }
 }
@@ -205,6 +219,7 @@ pub enum CoreFunction {
     PrintStr,
     PrintInt,
     PrintBool,
+    FmtInt,
 }
 
 impl From<CoreFunction> for &'static str {
@@ -213,6 +228,7 @@ impl From<CoreFunction> for &'static str {
             CoreFunction::PrintStr => "__rinha_print_str",
             CoreFunction::PrintInt => "__rinha_print_int",
             CoreFunction::PrintBool => "__rinha_print_bool",
+            CoreFunction::FmtInt => "__rinha_fmt_int",
         }
     }
 }

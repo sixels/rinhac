@@ -3,7 +3,7 @@ let simple = fn () => {
     let B = 2;
     let bar = fn () => {
         let A = A + B;
-        print(A)
+        print("bar A: " + A)
     };
     let foo = fn () => {
         let B = 1010 + A;
@@ -16,13 +16,13 @@ let complex = fn () => {
     let B = 2;
     let bar = fn () => {
         let A = A + B;
-        print(A)
+        print("bar A: " + A)
     };
     let foo = fn () => {
         let B = 1010 + A;
         let bar = fn () => {
             let A = A + B;
-            print(A)
+            print("foo.bar A: " + A)
         };
         bar()
     };
