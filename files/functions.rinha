@@ -1,11 +1,31 @@
-let foo = fn (a, b, c) => {    
-    let c1 = fn () => {
-        let x = 2 + a;
-        print((b == x) == c)
+let simple = fn () => {
+    let A = 1;
+    let B = 2;
+    let bar = fn () => {
+        let A = A + B;
+        print(A)
     };
-    c1()
+    let foo = fn () => {
+        let B = 1010 + A;
+        bar()
+    };
+    foo()
 };
-
-
-
-foo(1+2, 5, true)
+let complex = fn () => {
+    let A = 1;
+    let B = 2;
+    let bar = fn () => {
+        let A = A + B;
+        print(A)
+    };
+    let foo = fn () => {
+        let B = 1010 + A;
+        let bar = fn () => {
+            let A = A + B;
+            print(A)
+        };
+        bar()
+    };
+    foo()
+};
+complex()

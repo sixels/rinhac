@@ -1,9 +1,7 @@
 use std::{
-    borrow::Cow,
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     rc::Rc,
-    sync::atomic::AtomicBool,
 };
 
 use inkwell::{basic_block::BasicBlock, types::BasicTypeEnum, values::PointerValue};
@@ -17,6 +15,13 @@ use super::Compiler;
 
 pub type ScopeRc<'ctx> = Rc<RefCell<Scope<'ctx>>>;
 
+#[derive(Debug)]
+pub struct IndirectVariable<'ctx> {
+    pub symbol: String,
+    pub known_type: ValueType<'ctx>,
+    pub ptr: PointerValue<'ctx>,
+}
+
 pub trait ScopeNode<'ctx> {
     fn create_child(&self, block: BasicBlock<'ctx>, function: Option<Closure<'ctx>>) -> Self;
     fn find_callable(&self, name: &str) -> Option<Rc<RefCell<Function<'ctx>>>>;
@@ -24,6 +29,13 @@ pub trait ScopeNode<'ctx> {
     fn add_variable(&self, name: impl Into<String>, value: Variable<'ctx>);
     fn find_captured_variable(&self, name: &str) -> Option<Variable<'ctx>>;
     fn add_captured_variable(&self, name: impl Into<String>, value: Variable<'ctx>);
+    fn find_any_variable(&self, name: &str) -> Result<Variable<'ctx>, String> {
+        self.find_variable(name)
+            .or_else(|| self.find_captured_variable(name))
+            .ok_or_else(|| format!("Variable \"{}\" not found", name))
+    }
+    fn get_indirect_captures_environ(&self, name: &str) -> Option<PointerValue<'ctx>>;
+    fn add_indirect_captures(&self, capture: &Capture<'ctx>);
 }
 
 #[derive(Debug)]
@@ -34,6 +46,7 @@ pub struct Scope<'ctx> {
     pub captured_variables: HashMap<String, Variable<'ctx>>,
     pub function: Closure<'ctx>,
     pub parent: Option<ScopeRc<'ctx>>,
+    pub indirect_captured_environment: BTreeMap<String, PointerValue<'ctx>>,
 }
 
 impl<'ctx> Scope<'ctx> {
@@ -42,11 +55,7 @@ impl<'ctx> Scope<'ctx> {
         function: Closure<'ctx>,
         parent: Option<ScopeRc<'ctx>>,
     ) -> Rc<RefCell<Self>> {
-        let name = format!(
-            "{}-{}",
-            function.funct.get_name().to_string_lossy(),
-            block.get_name().to_string_lossy()
-        );
+        let name = format!("{}", function.funct.get_name().to_string_lossy(),);
         Rc::new(RefCell::new(Self {
             name,
             block,
@@ -54,20 +63,25 @@ impl<'ctx> Scope<'ctx> {
             captured_variables: HashMap::new(),
             function,
             parent,
+            indirect_captured_environment: BTreeMap::new(),
         }))
     }
 }
 
 impl<'ctx> ScopeNode<'ctx> for ScopeRc<'ctx> {
     fn create_child(&self, block: BasicBlock<'ctx>, function: Option<Closure<'ctx>>) -> Self {
-        let this = self.borrow();
+        let block_name = function
+            .map(|f| f.funct.get_name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| block.get_name().to_string_lossy().into_owned());
+
         Rc::new(RefCell::new(Scope {
-            name: format!("{}-{}", this.name, block.get_name().to_string_lossy()),
+            name: block_name,
             block,
             variables: HashMap::new(),
             captured_variables: HashMap::new(),
-            function: function.unwrap_or(this.function),
+            function: function.unwrap_or_else(|| self.borrow().function),
             parent: Some(Rc::clone(self)),
+            indirect_captured_environment: BTreeMap::new(),
         }))
     }
 
@@ -105,6 +119,16 @@ impl<'ctx> ScopeNode<'ctx> for ScopeRc<'ctx> {
         self.borrow_mut()
             .captured_variables
             .insert(name.into(), value);
+    }
+
+    fn get_indirect_captures_environ(&self, name: &str) -> Option<PointerValue<'ctx>> {
+        self.borrow()
+            .indirect_captured_environment
+            .get(name)
+            .copied()
+    }
+    fn add_indirect_captures(&self, _capture: &Capture<'ctx>) {
+        todo!()
     }
 }
 
@@ -158,9 +182,8 @@ pub struct Function<'ctx> {
     pub name: String,
     pub body: ast::Function,
     pub definitions: Vec<(Vec<BasicTypeEnum<'ctx>>, Closure<'ctx>)>,
-    pub called: AtomicBool,
     pub definition_scope: ScopeRc<'ctx>,
-    pub captured_variables: Vec<(ValueType<'ctx>, String)>,
+    pub captured_variables: Vec<Capture<'ctx>>,
 }
 
 impl<'ctx> Function<'ctx> {
@@ -168,13 +191,12 @@ impl<'ctx> Function<'ctx> {
         name: String,
         body: ast::Function,
         definition_scope: &ScopeRc<'ctx>,
-        captured_variables: Vec<(ValueType<'ctx>, String)>,
+        captured_variables: Vec<Capture<'ctx>>,
     ) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             name,
             body,
             definitions: Vec::new(),
-            called: false.into(),
             definition_scope: Rc::clone(definition_scope),
             captured_variables,
         }))
@@ -199,102 +221,116 @@ impl<'ctx> Function<'ctx> {
         }
     }
 
-    pub(crate) fn check_captures<'a>(
+    pub(crate) fn captured_environment<'a>(
         scope: &ScopeRc<'ctx>,
         fn_ast: &'a ast::Function,
-    ) -> HashSet<Cow<'a, str>> {
-        let mut environ = fn_ast
+    ) -> (HashSet<&'a str>, BTreeMap<String, Vec<Capture<'ctx>>>) {
+        let environ = fn_ast
             .parameters
             .iter()
-            .map(|param| param.text.as_str().into())
-            .collect::<HashSet<Cow<'a, str>>>();
+            .map(|param| param.text.as_str())
+            .collect::<HashSet<&'a str>>();
 
-        let mut capture = HashSet::new();
+        let mut direct_captures = HashSet::new();
+        let mut indirect_captures = BTreeMap::new();
+        let mut captures = (&mut direct_captures, &mut indirect_captures);
 
-        Self::check_captures_with_env(scope, &fn_ast.value, &mut environ, &mut capture);
-        capture
+        Self::check_captures_with_env(&mut captures, scope, &environ, &fn_ast.value);
+        (direct_captures, indirect_captures)
     }
 
     fn check_captures_with_env<'a>(
+        captures: &mut (
+            &mut HashSet<&'a str>,
+            &mut BTreeMap<String, Vec<Capture<'ctx>>>,
+        ),
         scope: &ScopeRc<'ctx>,
+        parent_env: &HashSet<&'a str>,
         term: &'a ast::Term,
-        environ: &mut HashSet<Cow<'a, str>>,
-        capture: &mut HashSet<Cow<'a, str>>,
-    ) {
+    ) -> HashSet<&'a str> {
+        let mut environ = parent_env.clone();
+
         let mut current = Some(term);
         while let Some(term) = current {
             current = match term {
                 ast::Term::Let(l) => {
-                    Self::check_captures_with_env(scope, &l.value, environ, capture);
-                    environ.insert(l.name.text.as_str().into());
+                    Self::check_captures_with_env(captures, scope, &environ, &l.value);
+                    environ.insert(l.name.text.as_str());
                     Some(&l.next)
                 }
                 ast::Term::Var(v) => {
                     if !environ.contains(v.text.as_str()) {
-                        capture.insert(v.text.as_str().into());
+                        captures.0.insert(v.text.as_str());
                     }
                     None
                 }
                 ast::Term::Call(c) => {
                     if let ast::Term::Var(v) = c.callee.as_ref() {
-                        if let Some(callable) = scope.find_callable(&v.text) {
-                            let callable_ref = callable.borrow();
-                            for (_, symbol) in callable_ref.captured_variables.iter() {
-                                if !environ.contains(symbol.as_str()) {
-                                    capture.insert(Cow::Owned(symbol.clone()));
-                                }
+                        if !captures.0.contains(v.text.as_str()) {
+                            if let Some(callable) = scope.find_callable(&v.text) {
+                                let callable_ref = callable.borrow();
+
+                                captures.1.insert(
+                                    v.text.clone(),
+                                    callable_ref.captured_variables.clone(),
+                                );
                             }
                         }
                     }
-                    // scope.find_callable(c.callee)
+
                     for arg in c.arguments.iter() {
-                        Self::check_captures_with_env(scope, arg, environ, capture)
+                        Self::check_captures_with_env(captures, scope, &environ, arg);
                     }
                     None
                 }
                 ast::Term::Binary(b) => {
-                    Self::check_captures_with_env(scope, &b.lhs, environ, capture);
-                    Self::check_captures_with_env(scope, &b.rhs, environ, capture);
+                    Self::check_captures_with_env(captures, scope, &environ, &b.lhs);
+                    Self::check_captures_with_env(captures, scope, &environ, &b.rhs);
                     None
                 }
                 ast::Term::If(i) => {
-                    Self::check_captures_with_env(scope, &i.then, environ, capture);
-                    Self::check_captures_with_env(scope, &i.otherwise, environ, capture);
+                    Self::check_captures_with_env(captures, scope, &environ, &i.then);
+                    Self::check_captures_with_env(captures, scope, &environ, &i.otherwise);
                     None
                 }
                 ast::Term::First(f) => {
-                    Self::check_captures_with_env(scope, &f.value, environ, capture);
+                    Self::check_captures_with_env(captures, scope, &environ, &f.value);
                     None
                 }
                 ast::Term::Second(s) => {
-                    Self::check_captures_with_env(scope, &s.value, environ, capture);
+                    Self::check_captures_with_env(captures, scope, &environ, &s.value);
                     None
                 }
                 ast::Term::Print(p) => {
-                    Self::check_captures_with_env(scope, &p.value, environ, capture);
+                    Self::check_captures_with_env(captures, scope, &environ, &p.value);
                     None
                 }
                 ast::Term::Tuple(t) => {
-                    Self::check_captures_with_env(scope, &t.first, environ, capture);
-                    Self::check_captures_with_env(scope, &t.second, environ, capture);
+                    Self::check_captures_with_env(captures, scope, &environ, &t.first);
+                    Self::check_captures_with_env(captures, scope, &environ, &t.second);
                     None
                 }
                 ast::Term::Function(a) => {
-                    for param in a.parameters.iter() {
-                        environ.insert(param.text.as_str().into());
-                    }
-                    Self::check_captures_with_env(scope, &a.value, environ, capture);
+                    let mut fn_env = a
+                        .parameters
+                        .iter()
+                        .map(|param| param.text.as_str())
+                        .collect::<HashSet<&'a str>>();
+                    fn_env.extend(&environ);
+                    Self::check_captures_with_env(captures, scope, &fn_env, &a.value);
                     None
                 }
                 _ => None,
             }
         }
+
+        environ
     }
 
     pub fn monomorph_name(&self, params: impl Iterator<Item = ValueType<'ctx>>) -> String {
         format!(
-            "{}_{}",
-            self.name,
+            "{}${}",
+            self.unique_name(),
             params
                 .map(|p| match p {
                     ValueType::Int => "i",
@@ -305,11 +341,9 @@ impl<'ctx> Function<'ctx> {
                 .collect::<String>()
         )
     }
-}
 
-impl<'ctx> Drop for Scope<'ctx> {
-    fn drop(&mut self) {
-        println!("Dropping scope: {}", self.name);
+    pub fn unique_name(&self) -> String {
+        format!("{}_{}", self.definition_scope.borrow().name, self.name)
     }
 }
 
@@ -331,5 +365,40 @@ impl<'ctx> FunctionDefinition<'ctx> {
                 None,
             ),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct CapturedVarMetadata<'ctx> {
+    pub symbol: String,
+    pub known_type: ValueType<'ctx>,
+}
+
+impl<'ctx> Drop for Scope<'ctx> {
+    fn drop(&mut self) {
+        println!("Dropping scope: {}", self.name);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Capture<'ctx> {
+    Direct {
+        symbol: String,
+        known_type: ValueType<'ctx>,
+    },
+    Indirect {
+        symbol: String,
+        function: Rc<RefCell<Function<'ctx>>>,
+    },
+}
+impl<'ctx> Capture<'ctx> {
+    pub fn direct(symbol: impl Into<String>, known_type: ValueType<'ctx>) -> Self {
+        Self::Direct {
+            symbol: symbol.into(),
+            known_type,
+        }
+    }
+    pub fn indirect(symbol: String, function: Rc<RefCell<Function<'ctx>>>) -> Self {
+        Self::Indirect { symbol, function }
     }
 }

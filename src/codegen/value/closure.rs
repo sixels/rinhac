@@ -8,10 +8,9 @@ use inkwell::{
 };
 
 use crate::{
-    ast,
     codegen::{enums::Enum, FIRST_BLOCK_NAME},
     compiler::{
-        environment::{Function, ScopeNode, Variable},
+        environment::{Capture, Function, ScopeNode, Variable},
         Compiler,
     },
 };
@@ -50,7 +49,7 @@ impl<'ctx> Closure<'ctx> {
             .map(|(param, ast_param)| (param.get_known_type(), ast_param.text.to_string()))
             .collect::<Vec<_>>();
         let funct_name_monomorphized = if arguments.is_empty() {
-            function.name.clone()
+            function.unique_name()
         } else {
             function.monomorph_name(params_known_types.iter().map(|(p, _)| p).copied())
         };
@@ -70,21 +69,10 @@ impl<'ctx> Closure<'ctx> {
         );
 
         // insert captures on params
-        let captures_type = if !function.captured_variables.is_empty() {
-            // generate struct `{ ptr, ptr, ... }`
-            let capture_fields =
-                std::iter::repeat(compiler.context.i8_type().ptr_type(Default::default()))
-                    .take(function.captured_variables.len())
-                    .map(|t| t.into())
-                    .collect::<Vec<_>>();
-            let captures = compiler.context.struct_type(&capture_fields, false);
-
-            param_metadata.insert(1, captures.ptr_type(Default::default()).into());
-
-            Some(captures)
-        } else {
-            None
-        };
+        let captures_type = build_captures_struct(function, compiler);
+        if let Some(captures_struct) = captures_type {
+            param_metadata.insert(1, captures_struct.ptr_type(Default::default()).into());
+        }
 
         // define the function
         let signature = compiler.context.void_type().fn_type(&param_metadata, false);
@@ -115,36 +103,13 @@ impl<'ctx> Closure<'ctx> {
             .create_child(fn_block, Some(closure));
         let call_scope = Rc::clone(&compiler.scope);
 
-        // let mut captured_values = Vec::with_capacity(function.captured_variables.len());
-        // for (var, symbol) in function.captured_variables.iter() {
-        //     // captured_values.push()
-        //     match var {
-        //         Variable::Value(v) => {
-        //             captured_values.push((v.get_known_type(), symbol.clone()));
-        //         }
-        //         Variable::Constant(c) => {
-        //             compiler.scope.add_variable(
-        //                 symbol.clone(),
-        //                 Variable::Value(c.build_variable(compiler, symbol)),
-        //             );
-        //             captured_values.push((c.get_known_type(), symbol.clone()));
-        //         }
-        //         _ => panic!("can't capture yet"),
-        //     }
-        // }
-
         // enter scope
         compiler.scope.clone_from(&closure_scope);
         compiler
             .builder
             .position_at_end(closure_scope.borrow().block);
         // build function
-        closure.build_function(
-            compiler,
-            params_known_types,
-            &function.captured_variables,
-            &function.body.value,
-        );
+        closure.build_function(compiler, params_known_types, function);
         // leave scope
         compiler.scope.clone_from(&call_scope);
         compiler.builder.position_at_end(call_scope.borrow().block);
@@ -156,8 +121,7 @@ impl<'ctx> Closure<'ctx> {
         &self,
         compiler: &mut Compiler<'_, 'ctx>,
         params: Vec<(ValueType<'ctx>, String)>,
-        captured_values: &[(ValueType<'ctx>, String)],
-        body: &ast::Term,
+        function: &Function<'ctx>,
     ) {
         // put parameters in current scope
         let params = self
@@ -187,7 +151,7 @@ impl<'ctx> Closure<'ctx> {
         if self.captures.is_some() {
             let captures_ref = self.funct.get_nth_param(1).unwrap().into_pointer_value();
 
-            for (n, (value_type, symbol)) in captured_values.iter().enumerate() {
+            for (n, capture) in function.captured_variables.iter().enumerate() {
                 let load_capture = if n == 0 {
                     captures_ref
                 } else {
@@ -204,46 +168,61 @@ impl<'ctx> Closure<'ctx> {
                     };
 
                     ptr
-                    // todo!()
                 };
 
-                let load_capture = compiler
-                    .builder
-                    .build_load(
-                        match value_type {
-                            ValueType::Int => {
-                                compiler.context.i32_type().ptr_type(Default::default())
-                            }
-                            ValueType::Bool => {
-                                compiler.context.bool_type().ptr_type(Default::default())
-                            }
-                            ValueType::Str(_) => {
-                                compiler.context.i8_type().ptr_type(Default::default())
-                            }
-                            ValueType::Closure(_) => todo!("closures are not captured yet"),
-                        },
-                        load_capture,
-                        "",
-                    )
-                    .into_pointer_value();
+                match capture {
+                    Capture::Direct { symbol, known_type } => {
+                        let load_capture = compiler
+                            .builder
+                            .build_load(
+                                match known_type {
+                                    ValueType::Int => {
+                                        compiler.context.i32_type().ptr_type(Default::default())
+                                    }
+                                    ValueType::Bool => {
+                                        compiler.context.bool_type().ptr_type(Default::default())
+                                    }
+                                    ValueType::Str(_) => {
+                                        compiler.context.i8_type().ptr_type(Default::default())
+                                    }
+                                    ValueType::Closure(_) => {
+                                        todo!("closures won't be captured yet")
+                                    }
+                                },
+                                load_capture,
+                                "",
+                            )
+                            .into_pointer_value();
 
-                let variable = match *value_type {
-                    ValueType::Int => Variable::Value(super::ValueRef::Primitive(
-                        super::PrimitiveRef::Int(load_capture),
-                    )),
-                    ValueType::Bool => Variable::Value(super::ValueRef::Primitive(
-                        super::PrimitiveRef::Bool(load_capture),
-                    )),
-                    ValueType::Str(len) => Variable::Value(super::ValueRef::Str(super::StrRef {
-                        ptr: load_capture,
-                        len,
-                    })),
-                    _ => todo!(),
-                };
+                        let variable = match *known_type {
+                            ValueType::Int => Variable::Value(super::ValueRef::Primitive(
+                                super::PrimitiveRef::Int(load_capture),
+                            )),
+                            ValueType::Bool => Variable::Value(super::ValueRef::Primitive(
+                                super::PrimitiveRef::Bool(load_capture),
+                            )),
+                            ValueType::Str(len) => {
+                                Variable::Value(super::ValueRef::Str(super::StrRef {
+                                    ptr: load_capture,
+                                    len,
+                                }))
+                            }
+                            _ => todo!(),
+                        };
 
-                compiler
-                    .scope
-                    .add_captured_variable(symbol.clone(), variable);
+                        compiler
+                            .scope
+                            .add_captured_variable(symbol.clone(), variable);
+                    }
+                    Capture::Indirect {
+                        symbol: cl_symbol, ..
+                    } => {
+                        let mut scope = compiler.scope.borrow_mut();
+                        scope
+                            .indirect_captured_environment
+                            .insert(cl_symbol.clone(), load_capture);
+                    }
+                }
             }
         }
 
@@ -251,11 +230,30 @@ impl<'ctx> Closure<'ctx> {
             compiler.scope.add_variable(name, param);
         }
 
-        let mut next = Some(body);
+        let mut next = Some(function.body.value.as_ref());
         while let Some(term) = next {
             next = compiler.compile(term);
         }
 
         compiler.builder.build_return(None);
+    }
+}
+
+pub fn build_captures_struct<'ctx>(
+    function: &Function<'ctx>,
+    compiler: &mut Compiler<'_, 'ctx>,
+) -> Option<StructType<'ctx>> {
+    if !function.captured_variables.is_empty() {
+        // generate struct `{ ptr, ptr, ... }`
+        let capture_fields =
+            std::iter::repeat(compiler.context.i8_type().ptr_type(Default::default()))
+                .take(function.captured_variables.len())
+                .map(|t| t.into())
+                .collect::<Vec<_>>();
+        let captures = compiler.context.struct_type(&capture_fields, false);
+
+        Some(captures)
+    } else {
+        None
     }
 }

@@ -8,14 +8,14 @@ use crate::{
     ast,
     codegen::{enums::Enum, value::Closure},
     compiler::{
-        environment::{Function, ScopeNode, Variable},
+        environment::{Capture, Function, ScopeNode, Variable},
         Compiler, CoreFunction,
     },
 };
 
 use self::{
     traits::{Codegen, DerefValue},
-    value::{Primitive, Str, Value},
+    value::{closure::build_captures_struct, Primitive, Str, Value},
 };
 
 pub const FIRST_BLOCK_NAME: &str = "start";
@@ -297,44 +297,83 @@ impl Codegen for ast::Call {
         args.insert(0, sret.into());
 
         // add captures to arguments
-        if let Some(captures) = closure.captures {
-            let funct_ref = funct.borrow();
-
-            let captured = compiler.builder.build_alloca(captures, "cap");
-
-            for (n, (_, s)) in funct_ref.captured_variables.iter().enumerate() {
-                let Some(var) =  compiler.scope.find_variable(s).or_else(|| compiler.scope.find_captured_variable(s)) else {
-                    panic!("variable {s} not found")
-                };
-
-                if n == 0 {
-                    compiler
-                        .builder
-                        .build_store(captured, var.get_ptr(compiler));
-                } else {
-                    let ptr = unsafe {
-                        compiler.builder.build_in_bounds_gep(
-                            captures,
-                            captured,
-                            &[
-                                compiler.context.i32_type().const_int(0, false),
-                                compiler.context.i32_type().const_int(n as _, false),
-                            ],
-                            "",
-                        )
-                    };
-                    compiler.builder.build_store(ptr, var.get_ptr(compiler));
-                };
-            }
+        if let Some(captures_struct) = closure.captures {
+            let captures_ptr = if let Some(environ) = compiler
+                .scope
+                .get_indirect_captures_environ(&funct.borrow().unique_name())
+            {
+                compiler
+                    .builder
+                    .build_load(captures_struct.ptr_type(Default::default()), environ, "")
+                    .into_pointer_value()
+            } else {
+                let captures_ptr = compiler.builder.build_alloca(captures_struct, "cap");
+                let funct_ref = funct.borrow();
+                build_capture_args(compiler, &funct_ref, captures_ptr, captures_struct);
+                captures_ptr
+            };
 
             // let capture_names = &funct_ref.captures;
             // compiler.scope.find_variable(name)
-            args.insert(1, captured.into());
+            args.insert(1, captures_ptr.into());
         }
 
         compiler.builder.build_direct_call(closure.funct, &args, "");
 
         sret
+    }
+}
+
+fn build_capture_args<'ctx>(
+    compiler: &mut Compiler<'_, 'ctx>,
+    funct_ref: &Function<'ctx>,
+    captures_ptr: PointerValue<'ctx>,
+    captures_struct: inkwell::types::StructType<'ctx>,
+) {
+    for (n, capture) in funct_ref.captured_variables.iter().enumerate() {
+        let value_ptr = match capture {
+            Capture::Direct { symbol, .. } => {
+                let Some(var) =  compiler.scope.find_variable(symbol).or_else(|| compiler.scope.find_captured_variable(symbol)) else {
+                    panic!("variable {symbol} not found")
+                };
+                var.get_ptr(compiler)
+            }
+
+            Capture::Indirect { function, .. } => {
+                let funct_indi_ref = function.borrow();
+                let captures_struct_indi =
+                    build_captures_struct(&funct_indi_ref, compiler).unwrap();
+                let captures_ptr_indi = compiler
+                    .builder
+                    .build_alloca(captures_struct_indi, "cap_indi");
+
+                build_capture_args(
+                    compiler,
+                    &funct_indi_ref,
+                    captures_ptr_indi,
+                    captures_struct_indi,
+                );
+
+                captures_ptr_indi
+            }
+        };
+
+        if n == 0 {
+            compiler.builder.build_store(captures_ptr, value_ptr);
+        } else {
+            let ptr = unsafe {
+                compiler.builder.build_in_bounds_gep(
+                    captures_struct,
+                    captures_ptr,
+                    &[
+                        compiler.context.i32_type().const_int(0, false),
+                        compiler.context.i32_type().const_int(n as _, false),
+                    ],
+                    "",
+                )
+            };
+            compiler.builder.build_store(ptr, value_ptr);
+        };
     }
 }
 
@@ -348,16 +387,25 @@ impl Codegen for ast::Let {
             ast::Term::Str(s) => Value::Str(s.codegen(compiler)),
             ast::Term::Binary(b) => b.codegen(compiler),
             ast::Term::Function(f) => {
-                let captures = Function::check_captures(&compiler.scope, f);
-                let mut captured_variables = Vec::with_capacity(captures.len());
-                for symbol in captures {
-                    let var = compiler
-                        .scope
-                        .find_variable(&symbol)
-                        .or_else(|| compiler.scope.find_captured_variable(&symbol))
-                        .unwrap_or_else(|| panic!("variable {} not defined", symbol));
-                    captured_variables.push((var.get_known_type(), String::from(symbol)));
-                }
+                let (direct_captures, indirect_captures) =
+                    Function::captured_environment(&compiler.scope, f);
+
+                let captured_variables = direct_captures
+                    .into_iter()
+                    .map(|dc| {
+                        let var = compiler.scope.find_any_variable(dc).unwrap();
+
+                        Capture::direct(dc, var.get_known_type())
+                    })
+                    .chain(indirect_captures.into_keys().map(|name| {
+                        let funct = compiler.scope.find_callable(&name).unwrap();
+                        let name = {
+                            let funct_ref = &funct.borrow();
+                            funct_ref.unique_name()
+                        };
+                        Capture::indirect(name, funct)
+                    }))
+                    .collect::<Vec<_>>();
 
                 let funct = Variable::Function(Function::new(
                     self.name.text.clone(),
@@ -373,7 +421,9 @@ impl Codegen for ast::Let {
                 Variable::Constant(c) => c,
                 Variable::Function(_) => todo!(),
             },
-            _ => unimplemented!(),
+            _ => Value::Primitive(Primitive::Int(
+                compiler.context.i32_type().const_int(0, false),
+            )),
         };
 
         let variable = value.build_variable(compiler, &self.name.text);
