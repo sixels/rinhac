@@ -26,3 +26,9 @@ int __rinha_fmt_bool(char *buf, bool value)
 {
     return sprintf(buf, "%s", value ? "true" : "false");
 }
+
+bool __rinha_memcmp(const void *a, const void *b, int bytes)
+{
+    int res = memcmp(a, b, bytes);
+    return res == 0;
+}
