@@ -1,3 +1,4 @@
+pub mod core;
 pub mod enums;
 pub mod traits;
 pub mod value;
@@ -13,11 +14,12 @@ use crate::{
     codegen::{enums::Enum, value::Closure},
     compiler::{
         environment::{find_captures, Capture, Function, ScopeNode, Variable},
-        Compiler, CoreFunction,
+        Compiler,
     },
 };
 
 use self::{
+    core::CoreFunction,
     traits::{Codegen, CodegenValue, DerefValue},
     value::{closure::build_captures_struct, Primitive, Str, Value},
 };
@@ -176,7 +178,7 @@ impl Codegen for ast::Binary {
                     compiler.context.bool_type().const_int(0 as _, false)
                 } else {
                     let result = compiler.builder.build_call(
-                        compiler.core_functions[CoreFunction::MemCmp],
+                        compiler.core_functions.get(CoreFunction::MemCmp),
                         &[l.ptr.into(), r.ptr.into(), l.len.into()],
                         "",
                     );
@@ -187,7 +189,7 @@ impl Codegen for ast::Binary {
                     compiler.context.bool_type().const_int(1 as _, false)
                 } else {
                     let result = compiler.builder.build_call(
-                        compiler.core_functions[CoreFunction::MemCmp],
+                        compiler.core_functions.get(CoreFunction::MemCmp),
                         &[l.ptr.into(), r.ptr.into(), l.len.into()],
                         "",
                     );
@@ -208,7 +210,7 @@ impl Codegen for ast::Binary {
                 let number_len = compiler
                     .builder
                     .build_call(
-                        compiler.core_functions[CoreFunction::FmtInt],
+                        compiler.core_functions.get(CoreFunction::FmtInt),
                         &[number_buf.into(), number.into()],
                         "",
                     )
@@ -284,7 +286,7 @@ impl Codegen for ast::Print {
             Value::Closure(_closure) => todo!("should print '<#closure>'"),
         };
 
-        let funct = &compiler.core_functions[funct];
+        let funct = compiler.core_functions.get(funct);
         let funct_pointer = funct.as_global_value().as_pointer_value();
         let ret =
             compiler
@@ -435,13 +437,14 @@ impl Codegen for ast::Let {
 
                         Capture::direct(dc, var)
                     })
-                    .chain(indirect_captures.into_iter().map(|name| {
-                        let funct = compiler.scope.find_callable(&name).unwrap();
-                        let name = {
-                            let funct_ref = &funct.borrow();
-                            funct_ref.unique_name()
-                        };
-                        Capture::indirect(name, funct)
+                    .chain(indirect_captures.into_iter().filter_map(|name| {
+                        compiler.scope.find_callable(&name).map(|funct| {
+                            let name = {
+                                let funct_ref = &funct.borrow();
+                                funct_ref.unique_name()
+                            };
+                            Capture::indirect(name, funct)
+                        })
                     }))
                     .collect::<Vec<_>>();
 
