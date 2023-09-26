@@ -1,0 +1,15 @@
+let result =
+    if (1 + 1 == 2) {
+        let a = if (2 + 2 == 5) {
+            2
+        } else {
+            "abacate 123"
+        };
+        a
+    } else {
+        false
+    };
+
+
+
+print(result)

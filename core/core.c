@@ -1,16 +1,18 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 typedef char bool;
 
-void __rinha_print_str(const char *data, int len)
+int __rinha_print_str(const char *data, int len)
 {
     if (data == NULL)
     {
         printf("<#null>\n");
-        return;
+        return 0;
     }
     printf("%.*s\n", len, data);
+    return 0;
 }
 
 // deprecated: use fmt_int and print_str
@@ -31,4 +33,10 @@ bool __rinha_memcmp(const void *a, const void *b, int bytes)
 {
     int res = memcmp(a, b, bytes);
     return res == 0;
+}
+
+void __rinha_panic()
+{
+    printf("runtime error\n");
+    exit(1);
 }

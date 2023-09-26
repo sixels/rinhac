@@ -14,8 +14,8 @@ use crate::{
     ast,
     codegen::{
         core::CoreFunctions,
-        traits::Codegen,
-        value::{Closure, Str},
+        traits::{Codegen, CodegenValue},
+        value::{Closure, Str, Value},
         FIRST_BLOCK_NAME,
     },
 };
@@ -36,10 +36,7 @@ impl Rinhac {
 
         let mut compiler = Compiler::new(&context, &module, builder);
 
-        let mut next = Some(&ast.expression);
-        while let Some(next_term) = next {
-            next = compiler.compile(next_term);
-        }
+        compiler.compile_block(&ast.expression);
 
         compiler.finalize();
 
@@ -78,36 +75,34 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         }
     }
 
-    pub fn compile<'t>(&mut self, term: &'t ast::Term) -> Option<&'t ast::Term> {
-        println!("compiling: {:?}\n\n", term);
+    pub fn compile_block(&mut self, term: &ast::Term) -> Value<'ctx> {
+        let (mut val, mut next) = self.compile(term);
+        while let Some(next_term) = next {
+            (val, next) = self.compile(next_term);
+        }
 
+        val
+    }
+
+    pub fn compile<'t>(&mut self, term: &'t ast::Term) -> (Value<'ctx>, Option<&'t ast::Term>) {
         match term {
-            ast::Term::Print(print) => {
-                print.codegen(self);
-                None
-            }
-            ast::Term::Let(binding) => {
-                binding.codegen(self);
-                Some(&binding.next)
-            }
+            ast::Term::Print(print) => (print.codegen(self).into(), None),
+            ast::Term::Let(binding) => (
+                binding.codegen(self).codegen_value(self),
+                Some(&binding.next),
+            ),
 
-            ast::Term::Call(call) => {
-                call.codegen(self);
-                None
-            }
+            ast::Term::Call(call) => (call.codegen(self), None),
 
-            ast::Term::If(conditional) => {
-                conditional.codegen(self);
-                None
-            }
+            ast::Term::If(conditional) => (conditional.codegen(self), None),
 
-            // ignore top-level values for now
-            ast::Term::Var(_)
-            | ast::Term::Tuple(..)
-            | ast::Term::Binary(..)
-            | ast::Term::Bool(..)
-            | ast::Term::Int(..)
-            | ast::Term::Str(..) => None,
+            ast::Term::Var(v) => (v.codegen(self).codegen_value(self), None),
+            // ast::Term::Tuple(tuple) => (tuple.codegen(self).into(), None),
+            ast::Term::Binary(binary) => (binary.codegen(self), None),
+            ast::Term::Bool(bool) => (bool.codegen(self).into(), None),
+            ast::Term::Int(int) => (int.codegen(self).into(), None),
+            ast::Term::Str(str) => (str.codegen(self).into(), None),
+
             _ => todo!(),
         }
     }

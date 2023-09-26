@@ -25,6 +25,7 @@ impl<'a, 'ctx> CoreFunctions<'a, 'ctx> {
                 CoreFunction::PrintBool => OnceCell::new(),
                 CoreFunction::FmtInt => OnceCell::new(),
                 CoreFunction::MemCmp => OnceCell::new(),
+                CoreFunction::Panic => OnceCell::new(),
             },
         }
     }
@@ -45,6 +46,7 @@ pub enum CoreFunction {
     PrintBool,
     FmtInt,
     MemCmp,
+    Panic,
 }
 
 impl CoreFunction {
@@ -78,6 +80,7 @@ impl CoreFunction {
                 ],
                 false,
             ),
+            CoreFunction::Panic => context.void_type().fn_type(&[], false),
         }
     }
 }
@@ -90,6 +93,7 @@ impl From<CoreFunction> for &'static str {
             CoreFunction::PrintBool => "__rinha_print_bool",
             CoreFunction::FmtInt => "__rinha_fmt_int",
             CoreFunction::MemCmp => "__rinha_memcmp",
+            CoreFunction::Panic => "__rinha_panic",
         }
     }
 }
