@@ -71,6 +71,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumflags2"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5998b4f30320c9d93aed72f63af821bfdac50465b75428fce77b48ec482c3939"
+dependencies = [
+ "enumflags2_derive",
+]
+
+[[package]]
+name = "enumflags2_derive"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f95e2801cd355d4a1a3e3953ce6ee5ae9603a5c833455343a8bfe3f44d418246"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "inkwell"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,6 +253,7 @@ version = "0.1.0"
 dependencies = [
  "current_platform",
  "enum-map",
+ "enumflags2",
  "inkwell",
  "serde",
  "serde_json",

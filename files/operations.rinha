@@ -1,0 +1,22 @@
+let test = fn(name, value, expected) => {
+    let result = value == expected;
+
+    let _ = if (result) {
+        let _ = print(name + " " + "PASSED");
+        0
+    } else {
+        let _ = print(name + " " + "FAILED");
+        let _ = print("expected '" + expected + "' but got '" + value + "'" );
+        0
+    };
+    let _ = print("");
+    result
+};
+
+let _ = test("add_num_num", 123 + 456, 579);
+let _ = test("add_num_string", 123 + "def", "123def");
+let _ = test("add_string_num", "abc" + 456, "abc456");
+let _ = test("add_string_string", "abc" + "def", "abcdef");
+let _ = test("empty_string_eq", "" == "", true);
+
+print("OK")

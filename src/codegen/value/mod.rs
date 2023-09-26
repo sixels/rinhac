@@ -1,18 +1,20 @@
 pub mod closure;
+pub mod enums;
 
 use std::fmt::Display;
 
+use enumflags2::{bitflags, BitFlags};
 use inkwell::{
     context::Context,
     types::{BasicTypeEnum, PointerType},
     values::{BasicValueEnum, IntValue, PointerValue},
 };
 
-use crate::compiler::Compiler;
+use crate::{ast, compiler::Compiler};
 
-use super::traits::DerefValue;
+use super::traits::{AsBasicType, DerefValue};
 
-pub use closure::Closure;
+pub use self::{closure::Closure, enums::Enum};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ValueType<'ctx> {
@@ -20,15 +22,68 @@ pub enum ValueType<'ctx> {
     Bool,
     Str(IntValue<'ctx>),
     Closure(PointerType<'ctx>),
+    Any(Enum<'ctx>),
 }
 
-impl<'ctx> ValueType<'ctx> {
-    fn as_basic_type(self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
-        match self {
+impl<'ctx> From<ValueType<'ctx>> for BitFlags<ValueTypeHint> {
+    fn from(val: ValueType<'ctx>) -> Self {
+        match val {
+            ValueType::Int => ValueTypeHint::Int.into(),
+            ValueType::Bool => ValueTypeHint::Bool.into(),
+            ValueType::Str(_) => ValueTypeHint::Str.into(),
+            ValueType::Closure(_) => ValueTypeHint::Closure.into(),
+            ValueType::Any(a) => a.type_hint,
+        }
+    }
+}
+
+impl<'ctx> PartialEq for ValueType<'ctx> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Str(_), Self::Str(_)) => true,
+            (Self::Closure(_), Self::Closure(_)) => true,
+            (Self::Int, Self::Int) | (Self::Bool, Self::Bool) => true,
+            (Self::Any(a), Self::Any(b)) => a.type_hint == b.type_hint,
+
+            _ => false,
+        }
+    }
+}
+
+#[bitflags]
+#[repr(u8)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ValueTypeHint {
+    Int = 1 << 0,
+    Bool = 1 << 1,
+    Str = 1 << 2,
+    Closure = 1 << 3,
+}
+
+impl ValueTypeHint {
+    pub fn any() -> enumflags2::BitFlags<ValueTypeHint> {
+        Self::Int | Self::Bool | Self::Str
+    }
+}
+
+impl<'ctx> AsBasicType<'ctx> for ValueType<'ctx> {
+    fn as_basic_type(&self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
+        match *self {
             Self::Int => ctx.i32_type().into(),
             Self::Bool => ctx.bool_type().into(),
             Self::Str(_) => ctx.i8_type().ptr_type(Default::default()).into(),
             Self::Closure(t) => t.into(),
+            Self::Any(_) => Enum::generic_type(ctx).ptr_type(Default::default()).into(),
+        }
+    }
+}
+impl<'ctx> AsBasicType<'ctx> for ValueTypeHint {
+    fn as_basic_type(&self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
+        match self {
+            Self::Int => ctx.i32_type().into(),
+            Self::Bool => ctx.bool_type().into(),
+            Self::Str => ctx.i8_type().ptr_type(Default::default()).into(),
+            Self::Closure => Enum::generic_type(ctx).ptr_type(Default::default()).into(),
         }
     }
 }
@@ -38,6 +93,7 @@ pub enum Value<'ctx> {
     Primitive(Primitive<'ctx>),
     Str(Str<'ctx>),
     Closure(Closure<'ctx>),
+    Boxed(Enum<'ctx>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,12 +101,89 @@ pub enum ValueRef<'ctx> {
     Primitive(PrimitiveRef<'ctx>),
     Str(StrRef<'ctx>),
     Closure(Closure<'ctx>),
+    Boxed(Enum<'ctx>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Primitive<'ctx> {
     Int(IntValue<'ctx>),
     Bool(IntValue<'ctx>),
+}
+
+impl<'ctx> Primitive<'ctx> {
+    pub fn build_arith(
+        self,
+        other: Self,
+        compiler: &Compiler<'_, 'ctx>,
+        op: ast::BinaryOp,
+    ) -> Self {
+        match (self, other) {
+            (Primitive::Int(l), Primitive::Int(r)) => match op {
+                ast::BinaryOp::Add => Primitive::Int(compiler.builder.build_int_add(l, r, "")),
+                ast::BinaryOp::Sub => Primitive::Int(compiler.builder.build_int_sub(l, r, "")),
+                ast::BinaryOp::Mul => Primitive::Int(compiler.builder.build_int_mul(l, r, "")),
+                ast::BinaryOp::Div => {
+                    Primitive::Int(compiler.builder.build_int_signed_div(l, r, ""))
+                }
+                ast::BinaryOp::Rem => {
+                    Primitive::Int(compiler.builder.build_int_signed_rem(l, r, ""))
+                }
+                ast::BinaryOp::Eq => Primitive::Bool(compiler.builder.build_int_compare(
+                    inkwell::IntPredicate::EQ,
+                    l,
+                    r,
+                    "",
+                )),
+                ast::BinaryOp::Neq => Primitive::Bool(compiler.builder.build_int_compare(
+                    inkwell::IntPredicate::NE,
+                    l,
+                    r,
+                    "",
+                )),
+                ast::BinaryOp::Lt => Primitive::Bool(compiler.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT,
+                    l,
+                    r,
+                    "",
+                )),
+                ast::BinaryOp::Lte => Primitive::Bool(compiler.builder.build_int_compare(
+                    inkwell::IntPredicate::SLE,
+                    l,
+                    r,
+                    "",
+                )),
+                ast::BinaryOp::Gt => Primitive::Bool(compiler.builder.build_int_compare(
+                    inkwell::IntPredicate::SGT,
+                    l,
+                    r,
+                    "",
+                )),
+                ast::BinaryOp::Gte => Primitive::Bool(compiler.builder.build_int_compare(
+                    inkwell::IntPredicate::SGE,
+                    l,
+                    r,
+                    "",
+                )),
+                _ => panic!("invalid operation between numbers"),
+            },
+            (Primitive::Bool(l), Primitive::Bool(r)) => Primitive::Bool(match op {
+                ast::BinaryOp::Eq => {
+                    compiler
+                        .builder
+                        .build_int_compare(inkwell::IntPredicate::EQ, l, r, "")
+                }
+                ast::BinaryOp::Neq => {
+                    compiler
+                        .builder
+                        .build_int_compare(inkwell::IntPredicate::NE, l, r, "tmpneq")
+                }
+                ast::BinaryOp::And => compiler.builder.build_and(l, r, ""),
+                ast::BinaryOp::Or => compiler.builder.build_or(l, r, ""),
+                _ => panic!("invalid operation between booleans"),
+            }),
+            (_l, _r) => panic!("bool and int operations are not allowed"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -78,7 +211,17 @@ pub struct StrRef<'ctx> {
 }
 
 impl<'ctx> Value<'ctx> {
-    pub fn get_type(&self) -> BasicTypeEnum<'ctx> {
+    pub fn as_basic_value(&self) -> BasicValueEnum<'ctx> {
+        match *self {
+            Self::Primitive(Primitive::Int(i)) => i.into(),
+            Self::Primitive(Primitive::Bool(b)) => b.into(),
+            Self::Str(str) => str.ptr.into(),
+            Self::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
+            Self::Boxed(_) => todo!(),
+        }
+    }
+
+    pub fn get_type(&self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
         match self {
             Value::Primitive(primitive) => match primitive {
                 Primitive::Int(i) => i.get_type().into(),
@@ -91,6 +234,7 @@ impl<'ctx> Value<'ctx> {
                 .as_pointer_value()
                 .get_type()
                 .into(),
+            Value::Boxed(_) => Enum::generic_type(ctx).into(),
         }
     }
 
@@ -104,20 +248,41 @@ impl<'ctx> Value<'ctx> {
             Value::Closure(c) => {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
+            Value::Boxed(a) => ValueType::Any(*a),
         }
     }
 
-    pub fn build_variable(&self, compiler: &Compiler<'_, 'ctx>, name: &str) -> ValueRef<'ctx> {
-        let ptr = compiler.builder.build_alloca(self.get_type(), name);
-        compiler
+    pub fn build_as_ref(&self, compiler: &Compiler<'_, 'ctx>, name: &str) -> ValueRef<'ctx> {
+        let ptr: PointerValue<'_> = compiler
             .builder
-            .build_store(ptr, BasicValueEnum::from(self));
+            .build_alloca(self.get_type(compiler.context), name);
+
+        if let Self::Boxed(b) = self {
+            compiler
+                .builder
+                .build_memmove(
+                    ptr,
+                    8,
+                    b.ptr,
+                    8,
+                    compiler.context.i32_type().const_int(24, false),
+                )
+                .unwrap();
+        } else {
+            compiler
+                .builder
+                .build_store(ptr, BasicValueEnum::from(self));
+        }
 
         match self {
             Self::Primitive(Primitive::Bool(_)) => ValueRef::Primitive(PrimitiveRef::Bool(ptr)),
             Self::Primitive(Primitive::Int(_)) => ValueRef::Primitive(PrimitiveRef::Int(ptr)),
             Self::Str(s) => ValueRef::Str(StrRef { ptr, len: s.len }),
             Self::Closure(closure) => ValueRef::Closure(*closure),
+            Self::Boxed(b) => ValueRef::Boxed(Enum {
+                ptr,
+                type_hint: b.type_hint,
+            }),
         }
     }
 }
@@ -136,6 +301,7 @@ impl<'ctx> ValueRef<'ctx> {
                 .as_pointer_value()
                 .get_type()
                 .into(),
+            Self::Boxed(b) => b.ptr.get_type().into(),
         }
     }
 
@@ -149,11 +315,12 @@ impl<'ctx> ValueRef<'ctx> {
             Self::Closure(c) => {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
+            Self::Boxed(b) => ValueType::Any(*b),
         }
     }
 
     pub fn cloned(&self, compiler: &Compiler<'_, 'ctx>) -> Self {
-        self.build_deref(compiler).build_variable(compiler, "_")
+        self.build_deref(compiler).build_as_ref(compiler, "_")
     }
 }
 
@@ -170,7 +337,8 @@ impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {
                 str.len,
             )
             .into(),
-            Self::Closure(closure) => closure.build_load(compiler),
+            Self::Closure(closure) => Value::Closure(*closure),
+            Self::Boxed(boxed) => Value::Boxed(*boxed),
         }
     }
 }
@@ -238,6 +406,7 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
             Value::Primitive(primitive) => primitive.into(),
             Value::Str(str) => str.ptr.into(),
             Value::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
+            Value::Boxed(boxed) => boxed.ptr.into(),
         }
     }
 }
@@ -249,6 +418,7 @@ impl<'ctx> Display for ValueType<'ctx> {
             ValueType::Bool => write!(f, "bool"),
             ValueType::Str(_) => write!(f, "str"),
             ValueType::Closure(_) => write!(f, "closure"),
+            ValueType::Any(_) => write!(f, "any"),
         }
     }
 }

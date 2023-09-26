@@ -8,7 +8,10 @@ use inkwell::{basic_block::BasicBlock, types::BasicTypeEnum, values::PointerValu
 
 use crate::{
     ast,
-    codegen::value::{Closure, PrimitiveRef, Value, ValueRef, ValueType},
+    codegen::{
+        traits::{CodegenValue, DerefValue},
+        value::{Closure, PrimitiveRef, Value, ValueRef, ValueType},
+    },
 };
 
 use super::Compiler;
@@ -147,14 +150,16 @@ impl<'ctx> Variable<'ctx> {
                 ValueRef::Primitive(PrimitiveRef::Int(i)) => i,
                 ValueRef::Str(s) => s.ptr,
                 ValueRef::Closure(c) => c.funct.as_global_value().as_pointer_value(),
+                ValueRef::Boxed(b) => b.ptr,
             },
             Variable::Constant(c) => {
-                let v = c.build_variable(compiler, "");
-                match v {
+                let c_ref = c.build_as_ref(compiler, "");
+                match c_ref {
                     ValueRef::Primitive(PrimitiveRef::Bool(b)) => b,
                     ValueRef::Primitive(PrimitiveRef::Int(i)) => i,
                     ValueRef::Str(s) => s.ptr,
                     ValueRef::Closure(c) => c.funct.as_global_value().as_pointer_value(),
+                    ValueRef::Boxed(b) => b.ptr,
                 }
             }
             _ => todo!(),
@@ -170,9 +175,25 @@ impl<'ctx> Variable<'ctx> {
                 ValueRef::Closure(c) => {
                     ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
                 }
+                ValueRef::Boxed(b) => ValueType::Any(*b),
             },
             Variable::Constant(c) => c.get_known_type(),
             _ => todo!(),
+        }
+    }
+}
+
+impl<'ctx> CodegenValue<'ctx> for Variable<'ctx> {
+    fn codegen_value(&self, compiler: &mut Compiler<'_, 'ctx>) -> Value<'ctx> {
+        match self {
+            Variable::Value(v) => v.build_deref(compiler),
+            Variable::Constant(c) => *c,
+            // returns 0 for now
+            Variable::Function(_) => Value::Primitive(crate::codegen::value::Primitive::Int(
+                compiler.context.i32_type().const_int(0, false),
+            )),
+            // closure.build_deref(compiler)
+            // }
         }
     }
 }
@@ -181,7 +202,7 @@ impl<'ctx> Variable<'ctx> {
 pub struct Function<'ctx> {
     pub name: String,
     pub body: ast::Function,
-    pub definitions: Vec<(Vec<BasicTypeEnum<'ctx>>, Closure<'ctx>)>,
+    pub definitions: Vec<(Vec<ValueType<'ctx>>, Closure<'ctx>)>,
     pub definition_scope: ScopeRc<'ctx>,
     pub captured_variables: Vec<Capture<'ctx>>,
 }
@@ -204,7 +225,7 @@ impl<'ctx> Function<'ctx> {
 
     pub fn get_or_insert_definition(
         &mut self,
-        params: &[BasicTypeEnum<'ctx>],
+        params: &[ValueType<'ctx>],
         define: impl FnOnce(&Self) -> Closure<'ctx>,
     ) -> Closure<'ctx> {
         if let Some(def) = self.definitions.iter().find(|(defined_params, _)| {
@@ -221,18 +242,11 @@ impl<'ctx> Function<'ctx> {
         }
     }
 
-    pub fn monomorph_name(&self, params: impl Iterator<Item = ValueType<'ctx>>) -> String {
+    pub fn monomorph_name(&self, params: impl Iterator<Item = (ValueType<'ctx>, bool)>) -> String {
         format!(
-            "{}${}",
+            "{}.{}",
             self.unique_name(),
-            params
-                .map(|p| match p {
-                    ValueType::Int => "i",
-                    ValueType::Bool => "b",
-                    ValueType::Str(_) => "s",
-                    ValueType::Closure(_) => "c",
-                })
-                .collect::<String>()
+            params.map(|p| format!("{}", p.0)).collect::<String>()
         )
     }
 

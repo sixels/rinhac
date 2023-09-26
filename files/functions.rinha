@@ -28,4 +28,8 @@ let complex = fn () => {
     };
     foo()
 };
-complex()
+
+let s = fn () => {
+    "abacate"
+};
+print(s())
