@@ -5,6 +5,7 @@ use std::{
 };
 
 use inkwell::{basic_block::BasicBlock, types::BasicTypeEnum, values::PointerValue};
+use rand::distributions::{Alphanumeric, DistString};
 
 use crate::{
     ast,
@@ -149,8 +150,9 @@ impl<'ctx> Variable<'ctx> {
                 ValueRef::Primitive(PrimitiveRef::Bool(b)) => b,
                 ValueRef::Primitive(PrimitiveRef::Int(i)) => i,
                 ValueRef::Str(s) => s.ptr,
-                ValueRef::Closure(c) => c.funct.as_global_value().as_pointer_value(),
                 ValueRef::Boxed(b) => b.ptr,
+                ValueRef::Closure(_) => panic!("closure cannot be used as a pointer"),
+                ValueRef::Tuple(_) => panic!(""),
             },
             Variable::Constant(c) => {
                 let c_ref = c.build_as_ref(compiler, "");
@@ -158,8 +160,9 @@ impl<'ctx> Variable<'ctx> {
                     ValueRef::Primitive(PrimitiveRef::Bool(b)) => b,
                     ValueRef::Primitive(PrimitiveRef::Int(i)) => i,
                     ValueRef::Str(s) => s.ptr,
-                    ValueRef::Closure(c) => c.funct.as_global_value().as_pointer_value(),
                     ValueRef::Boxed(b) => b.ptr,
+                    ValueRef::Closure(_) => panic!("A"),
+                    ValueRef::Tuple(_) => panic!(""),
                 }
             }
             _ => todo!(),
@@ -172,10 +175,11 @@ impl<'ctx> Variable<'ctx> {
                 ValueRef::Primitive(PrimitiveRef::Bool(_)) => ValueType::Bool,
                 ValueRef::Primitive(PrimitiveRef::Int(_)) => ValueType::Int,
                 ValueRef::Str(s) => ValueType::Str(s.len),
-                ValueRef::Closure(c) => {
-                    ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
+                ValueRef::Closure(cl) => {
+                    ValueType::Closure(cl.funct.as_global_value().as_pointer_value().get_type())
                 }
                 ValueRef::Boxed(b) => ValueType::Any(*b),
+                ValueRef::Tuple(_) => panic!(),
             },
             Variable::Constant(c) => c.get_known_type(),
             _ => todo!(),
@@ -205,14 +209,60 @@ pub struct Function<'ctx> {
     pub definitions: Vec<(Vec<ValueType<'ctx>>, Closure<'ctx>)>,
     pub definition_scope: ScopeRc<'ctx>,
     pub captured_variables: Vec<Capture<'ctx>>,
+    is_anonymous: bool,
 }
 
 impl<'ctx> Function<'ctx> {
+    pub fn build(
+        compiler: &Compiler<'_, 'ctx>,
+        name: Option<String>,
+        definition: &ast::Function,
+    ) -> Rc<RefCell<Self>> {
+        let is_anonymous = name.is_none();
+        let name = name.unwrap_or_else(|| {
+            let mut rng = rand::thread_rng();
+            Alphanumeric.sample_string(&mut rng, 10)
+        });
+        let (direct_captures, indirect_captures) = find_captures(definition);
+
+        let captured_variables = direct_captures
+            .into_iter()
+            .map(|dc| {
+                let var = compiler.scope.find_any_variable(dc).unwrap();
+                let var = if let Variable::Value(v) = var {
+                    Variable::Value(v.cloned(compiler))
+                } else {
+                    var
+                };
+
+                Capture::direct(dc, var)
+            })
+            .chain(indirect_captures.into_iter().filter_map(|name| {
+                compiler.scope.find_callable(&name).map(|funct| {
+                    let name = {
+                        let funct_ref = &funct.borrow();
+                        funct_ref.unique_name()
+                    };
+                    Capture::indirect(name, funct)
+                })
+            }))
+            .collect::<Vec<_>>();
+
+        Self::new(
+            name,
+            definition.clone(),
+            &compiler.scope,
+            captured_variables,
+            is_anonymous,
+        )
+    }
+
     pub fn new(
         name: String,
         body: ast::Function,
         definition_scope: &ScopeRc<'ctx>,
         captured_variables: Vec<Capture<'ctx>>,
+        is_anonymous: bool,
     ) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             name,
@@ -220,6 +270,7 @@ impl<'ctx> Function<'ctx> {
             definitions: Vec::new(),
             definition_scope: Rc::clone(definition_scope),
             captured_variables,
+            is_anonymous,
         }))
     }
 
@@ -370,7 +421,7 @@ impl<'ctx> FunctionDefinition<'ctx> {
 
 impl<'ctx> Drop for Scope<'ctx> {
     fn drop(&mut self) {
-        println!("Dropping scope: {}", self.name);
+        // println!("Dropping scope: {}", self.name);
     }
 }
 

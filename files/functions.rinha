@@ -12,7 +12,7 @@ let simple = fn () => {
     foo()
 };
 let complex = fn () => {
-    let A = 1;
+    let A = if (true) { 1 } else { "FALSE" };
     let B = 2;
     let bar = fn () => {
         let A = A + B;
@@ -29,7 +29,17 @@ let complex = fn () => {
     foo()
 };
 
-let s = fn () => {
-    "abacate"
+let simple_anonymous = fn () => {
+    let A = 1;
+    let B = 2;
+    let bar = fn () => {
+        let A = A + B;
+        print("bar A: " + A)
+    };
+    fn() => {
+        let B = 1010 + A;
+        bar()
+    }
 };
-print(s())
+
+print(simple_anonymous()())

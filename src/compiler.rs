@@ -20,7 +20,7 @@ use crate::{
     },
 };
 
-use self::environment::{Scope, ScopeRc};
+use self::environment::{Function, Scope, ScopeRc};
 
 pub struct Rinhac {}
 
@@ -40,7 +40,7 @@ impl Rinhac {
 
         compiler.finalize();
 
-        println!("GENERATED IR:\n{}", module.print_to_string().to_string(),)
+        // println!("GENERATED IR:\n{}", module.print_to_string().to_string(),)
     }
 }
 
@@ -103,6 +103,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             ast::Term::Int(int) => (int.codegen(self).into(), None),
             ast::Term::Str(str) => (str.codegen(self).into(), None),
 
+            ast::Term::Function(definition) => {
+                let function: std::rc::Rc<std::cell::RefCell<Function<'_>>> =
+                    Function::build(self, None, definition);
+
+                let (mut closure, capt_ty) = Closure::build_anonymous(self, &function.borrow());
+
+                closure.build_prepare_function(self, &function.borrow(), None, capt_ty);
+
+                (Value::Closure(closure), None)
+            }
             _ => todo!(),
         }
     }
@@ -112,7 +122,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             .position_at_end(self.entry_function.get_last_basic_block().unwrap());
         self.builder.build_return(None);
 
-        if !self.entry_function.verify(true) {
+        if !self.entry_function.verify(false) {
             // todo: error handling
             // self.entry_function.print_to_stderr();
             eprintln!("----------IR--------");
@@ -142,13 +152,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         .unwrap();
     }
 
-    // pub fn enter_scope(&mut self, scope: &ScopeNode<'ctx>) {
-    //     self.scope.enter(scope);
-    //     self.builder.position_at_end(scope.borrow().block);
-    // }
+    pub(crate) fn get_or_insert_string(&mut self, string: &str) -> Str<'ctx> {
+        let entry = self.strings.entry(String::from(string)).or_insert_with(|| {
+            let ptr = self.builder.build_global_string_ptr(string, "str");
 
-    // pub fn leave_scope(&mut self) {
-    //     self.scope.leave();
-    //     self.builder.position_at_end(self.scope.current_block());
-    // }
+            Str {
+                ptr: ptr.as_pointer_value(),
+                len: self.context.i32_type().const_int(string.len() as _, false),
+            }
+        });
+        *entry
+    }
 }

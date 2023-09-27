@@ -132,7 +132,7 @@ impl Element for Int {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Copy)]
+#[derive(Debug, Clone, Deserialize, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add, // Add
     Sub, // Subtract

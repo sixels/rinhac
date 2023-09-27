@@ -1,5 +1,6 @@
 use enumflags2::BitFlags;
 use inkwell::{
+    basic_block::BasicBlock,
     context::Context,
     types::{BasicTypeEnum, IntType, StructType},
     values::{BasicValue, PointerValue},
@@ -17,8 +18,11 @@ pub struct Enum<'ctx> {
     pub ptr: PointerValue<'ctx>,
     pub type_hint: BitFlags<ValueTypeHint>,
 }
+unsafe impl<'ctx> Send for Enum<'ctx> {}
+unsafe impl<'ctx> Sync for Enum<'ctx> {}
 
-type RuntimeMatchCallback<'a, 'ctx> = &'a dyn Fn(&'a Compiler<'a, 'ctx>, Value<'ctx>);
+type RuntimeMatchCallback<'a, 'ctx> =
+    &'a dyn Fn(&'a Compiler<'a, 'ctx>, Value<'ctx>, BasicBlock<'ctx>);
 
 impl<'ctx> Enum<'ctx> {
     pub fn build_new(compiler: &Compiler<'_, 'ctx>) -> Self {
@@ -108,13 +112,10 @@ impl<'ctx> Enum<'ctx> {
             ),
             ValueType::Closure(_) => (
                 ValueTypeHint::Closure,
-                (compiler.context.i64_type(), 1),
-                compiler
-                    .context
-                    .i8_type()
-                    .ptr_type(Default::default())
-                    .into(),
+                (compiler.context.i32_type(), 1),
+                compiler.context.i32_type().into(),
             ),
+            ValueType::Tuple(_, _) => todo!(),
         };
 
         let value_type_hints: BitFlags<ValueTypeHint> = value_type.into();
@@ -225,13 +226,10 @@ impl<'ctx> Enum<'ctx> {
                     .into(),
             ),
             ValueTypeHint::Closure => (
-                (compiler.context.i64_type(), 1),
-                compiler
-                    .context
-                    .i8_type()
-                    .ptr_type(Default::default())
-                    .into(),
+                (compiler.context.i32_type(), 1),
+                compiler.context.i32_type().into(),
             ),
+            ValueTypeHint::Tuple => todo!(),
         };
 
         let data = compiler
@@ -329,6 +327,13 @@ impl<'ctx> Enum<'ctx> {
                 .into()
             }
             ValueTypeHint::Closure => todo!(),
+            //  Value::Closure(
+            // compiler
+            //     .builder
+            //     .build_load(variant.as_basic_type(compiler.context), data, "")
+            //     .into_int_value(),
+            // ),
+            ValueTypeHint::Tuple => todo!(),
         }
     }
 
@@ -356,14 +361,13 @@ impl<'ctx> Enum<'ctx> {
             .i64_type()
             .const_int(expected as u8 as _, false);
 
-        let scope = compiler.scope.borrow();
+        let current_block = compiler.builder.get_insert_block().unwrap();
         let else_block = compiler
             .context
-            .append_basic_block(scope.function.funct, "bb");
+            .insert_basic_block_after(current_block, "bb");
         let then_block = compiler
             .context
-            .append_basic_block(scope.function.funct, "bb");
-        drop(scope);
+            .insert_basic_block_after(current_block, "bb");
 
         compiler.builder.build_conditional_branch(
             compiler
@@ -375,14 +379,6 @@ impl<'ctx> Enum<'ctx> {
 
         compiler.builder.position_at_end(else_block);
 
-        compiler.builder.build_call(
-            compiler.core_functions.get(CoreFunction::PrintInt),
-            &[compiler
-                .builder
-                .build_int_z_extend(tag, compiler.context.i32_type(), "")
-                .into()],
-            "",
-        );
         compiler
             .builder
             .build_call(compiler.core_functions.get(CoreFunction::Panic), &[], "");
@@ -395,37 +391,30 @@ impl<'ctx> Enum<'ctx> {
     pub fn build_runtime_match<'a>(
         &self,
         compiler: &'a Compiler<'a, 'ctx>,
+        merge_block: BasicBlock<'ctx>,
         match_map: &[(ValueTypeHint, RuntimeMatchCallback<'a, 'ctx>)],
     ) {
         let scope = compiler.scope.borrow();
-        let blocks = std::iter::repeat(())
-            .take(match_map.len())
-            .enumerate()
-            .map(|(i, _)| {
+
+        // create blocks for each match
+        let blocks = match_map
+            .iter()
+            .map(|(expected, _)| {
+                let expected_tag = compiler
+                    .context
+                    .i64_type()
+                    .const_int(*expected as u8 as _, false);
+
                 (
-                    compiler
-                        .context
-                        .append_basic_block(scope.function.funct, "bb"),
-                    if i == match_map.len() - 1 {
-                        None
-                    } else {
-                        Some(
-                            compiler
-                                .context
-                                .append_basic_block(scope.function.funct, "next"),
-                        )
-                    },
+                    expected_tag,
+                    compiler.context.prepend_basic_block(merge_block, "bb"),
                 )
             })
             .collect::<Vec<_>>();
+        // create a fallback block
+        let else_block = compiler.context.prepend_basic_block(merge_block, "else");
 
-        let else_block = compiler
-            .context
-            .append_basic_block(scope.function.funct, "else");
-        let merge_block = compiler
-            .context
-            .append_basic_block(scope.function.funct, "merge");
-
+        // get the tag to match against
         let tag = {
             let tag = compiler
                 .builder
@@ -440,31 +429,19 @@ impl<'ctx> Enum<'ctx> {
                 .build_int_z_extend(tag, compiler.context.i64_type(), "")
         };
 
-        for ((check_tag, callback), (current_block, next_block)) in
-            match_map.iter().zip(blocks.into_iter())
-        {
-            let expected_tag = compiler
-                .context
-                .i64_type()
-                .const_int(*check_tag as u8 as _, false);
-            compiler.builder.build_conditional_branch(
-                compiler.builder.build_int_compare(
-                    inkwell::IntPredicate::EQ,
-                    tag,
-                    expected_tag,
-                    "",
-                ),
-                current_block,
-                next_block.unwrap_or(else_block),
-            );
+        // create the switch instruction
+        compiler.builder.build_switch(tag, else_block, &blocks);
 
-            compiler.builder.position_at_end(current_block);
+        drop(scope);
+
+        // build the blocks
+        for ((check_tag, codegen), (_, block)) in match_map.iter().zip(blocks.into_iter()) {
+            compiler.builder.position_at_end(block);
             let value = self.unwrap_variant(compiler, *check_tag);
-            callback(compiler, value);
-            compiler.builder.build_unconditional_branch(merge_block);
-            compiler
-                .builder
-                .position_at_end(next_block.unwrap_or(merge_block))
+            codegen(compiler, value, else_block);
+            if block.get_terminator().is_none() {
+                compiler.builder.build_unconditional_branch(merge_block);
+            }
         }
 
         compiler.builder.position_at_end(else_block);
@@ -473,7 +450,7 @@ impl<'ctx> Enum<'ctx> {
             .build_call(compiler.core_functions.get(CoreFunction::Panic), &[], "");
         compiler.builder.build_unreachable();
 
-        compiler.builder.position_at_end(merge_block)
+        // compiler.builder.position_at_end(merge_block);
     }
 }
 

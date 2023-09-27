@@ -1,5 +1,6 @@
 pub mod closure;
 pub mod enums;
+pub mod tuple;
 
 use std::fmt::Display;
 
@@ -7,14 +8,17 @@ use enumflags2::{bitflags, BitFlags};
 use inkwell::{
     context::Context,
     types::{BasicTypeEnum, PointerType},
-    values::{BasicValueEnum, IntValue, PointerValue},
+    values::{AnyValue, BasicValueEnum, IntValue, PointerValue},
 };
 
 use crate::{ast, compiler::Compiler};
 
-use super::traits::{AsBasicType, DerefValue};
+use super::{
+    core::CoreFunction,
+    traits::{AsBasicType, DerefValue},
+};
 
-pub use self::{closure::Closure, enums::Enum};
+pub use self::{closure::Closure, enums::Enum, tuple::Tuple};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ValueType<'ctx> {
@@ -23,6 +27,7 @@ pub enum ValueType<'ctx> {
     Str(IntValue<'ctx>),
     Closure(PointerType<'ctx>),
     Any(Enum<'ctx>),
+    Tuple(ValueTypeHint, ValueTypeHint),
 }
 
 impl<'ctx> From<ValueType<'ctx>> for BitFlags<ValueTypeHint> {
@@ -33,6 +38,7 @@ impl<'ctx> From<ValueType<'ctx>> for BitFlags<ValueTypeHint> {
             ValueType::Str(_) => ValueTypeHint::Str.into(),
             ValueType::Closure(_) => ValueTypeHint::Closure.into(),
             ValueType::Any(a) => a.type_hint,
+            ValueType::Tuple(a, b) => ValueTypeHint::Tuple.into(),
         }
     }
 }
@@ -58,6 +64,7 @@ pub enum ValueTypeHint {
     Bool = 1 << 1,
     Str = 1 << 2,
     Closure = 1 << 3,
+    Tuple = 1 << 4,
 }
 
 impl ValueTypeHint {
@@ -74,6 +81,7 @@ impl<'ctx> AsBasicType<'ctx> for ValueType<'ctx> {
             Self::Str(_) => ctx.i8_type().ptr_type(Default::default()).into(),
             Self::Closure(t) => t.into(),
             Self::Any(_) => Enum::generic_type(ctx).ptr_type(Default::default()).into(),
+            Self::Tuple(a, b) => panic!("can't get basic type from tuple"),
         }
     }
 }
@@ -84,6 +92,7 @@ impl<'ctx> AsBasicType<'ctx> for ValueTypeHint {
             Self::Bool => ctx.bool_type().into(),
             Self::Str => ctx.i8_type().ptr_type(Default::default()).into(),
             Self::Closure => Enum::generic_type(ctx).ptr_type(Default::default()).into(),
+            Self::Tuple => panic!("can't get basic type from tuple"),
         }
     }
 }
@@ -94,6 +103,7 @@ pub enum Value<'ctx> {
     Str(Str<'ctx>),
     Closure(Closure<'ctx>),
     Boxed(Enum<'ctx>),
+    Tuple(Tuple<'ctx>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -102,6 +112,7 @@ pub enum ValueRef<'ctx> {
     Str(StrRef<'ctx>),
     Closure(Closure<'ctx>),
     Boxed(Enum<'ctx>),
+    Tuple(Tuple<'ctx>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,12 +123,12 @@ pub enum Primitive<'ctx> {
 
 impl<'ctx> Primitive<'ctx> {
     pub fn build_arith(
-        self,
-        other: Self,
         compiler: &Compiler<'_, 'ctx>,
+        lhs: Primitive<'ctx>,
+        rhs: Primitive<'ctx>,
         op: ast::BinaryOp,
-    ) -> Self {
-        match (self, other) {
+    ) -> Result<Self, &'static str> {
+        Ok(match (lhs, rhs) {
             (Primitive::Int(l), Primitive::Int(r)) => match op {
                 ast::BinaryOp::Add => Primitive::Int(compiler.builder.build_int_add(l, r, "")),
                 ast::BinaryOp::Sub => Primitive::Int(compiler.builder.build_int_sub(l, r, "")),
@@ -164,7 +175,7 @@ impl<'ctx> Primitive<'ctx> {
                     r,
                     "",
                 )),
-                _ => panic!("invalid operation between numbers"),
+                _ => return Err("invalid operation between numbers"),
             },
             (Primitive::Bool(l), Primitive::Bool(r)) => Primitive::Bool(match op {
                 ast::BinaryOp::Eq => {
@@ -179,9 +190,18 @@ impl<'ctx> Primitive<'ctx> {
                 }
                 ast::BinaryOp::And => compiler.builder.build_and(l, r, ""),
                 ast::BinaryOp::Or => compiler.builder.build_or(l, r, ""),
-                _ => panic!("invalid operation between booleans"),
+                _ => {
+                    return Err("invalid operation between booleans");
+                }
             }),
-            (_l, _r) => panic!("bool and int operations are not allowed"),
+            (_l, _r) => return Err("bool and int operations are not allowed"),
+        })
+    }
+
+    pub fn as_primitive_value(&self) -> BasicValueEnum<'ctx> {
+        match *self {
+            Self::Int(i) => i.into(),
+            Self::Bool(b) => b.into(),
         }
     }
 }
@@ -202,6 +222,64 @@ impl<'ctx> Str<'ctx> {
     pub fn new(ptr: PointerValue<'ctx>, len: IntValue<'ctx>) -> Self {
         Self { ptr, len }
     }
+
+    pub fn build_str_append(compiler: &Compiler<'_, 'ctx>, lhs: Str<'ctx>, rhs: Str<'ctx>) -> Self {
+        let size = compiler.builder.build_int_add(lhs.len, rhs.len, "");
+        let append_buf = compiler
+            .builder
+            .build_array_alloca(compiler.context.i8_type(), size, "");
+
+        compiler
+            .builder
+            .build_memcpy(append_buf, 1, lhs.ptr, 1, lhs.len)
+            .unwrap();
+        // safety: we just allocated the right amount of memory
+        let new_str_tail = unsafe {
+            compiler
+                .builder
+                .build_gep(compiler.context.i8_type(), append_buf, &[lhs.len], "")
+        };
+        compiler
+            .builder
+            .build_memcpy(new_str_tail, 1, rhs.ptr, 1, rhs.len)
+            .unwrap();
+
+        Str::new(append_buf, size)
+    }
+
+    pub fn build_fmt_primitive(compiler: &Compiler<'_, 'ctx>, value: Primitive<'ctx>) -> Self {
+        let number_buf = compiler
+            .builder
+            .build_malloc(
+                compiler
+                    .context
+                    .i8_type()
+                    .array_type(if matches!(value, Primitive::Int(_)) {
+                        24
+                    } else {
+                        6
+                    }),
+                "",
+            )
+            .unwrap();
+
+        let number_len = compiler
+            .builder
+            .build_indirect_call(
+                compiler.core_functions.get(CoreFunction::FmtInt).get_type(),
+                compiler
+                    .core_functions
+                    .get(CoreFunction::FmtInt)
+                    .as_global_value()
+                    .as_pointer_value(),
+                &[number_buf.into(), value.as_primitive_value().into()],
+                "",
+            )
+            .as_any_value_enum()
+            .into_int_value();
+
+        Str::new(number_buf, number_len)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -213,11 +291,11 @@ pub struct StrRef<'ctx> {
 impl<'ctx> Value<'ctx> {
     pub fn as_basic_value(&self) -> BasicValueEnum<'ctx> {
         match *self {
-            Self::Primitive(Primitive::Int(i)) => i.into(),
-            Self::Primitive(Primitive::Bool(b)) => b.into(),
+            Self::Primitive(p) => p.as_primitive_value(),
             Self::Str(str) => str.ptr.into(),
             Self::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
-            Self::Boxed(_) => todo!(),
+            Self::Boxed(_) => panic!("use boxed unwrap method to get the value"),
+            Self::Tuple(tup) => todo!(),
         }
     }
 
@@ -235,6 +313,7 @@ impl<'ctx> Value<'ctx> {
                 .get_type()
                 .into(),
             Value::Boxed(_) => Enum::generic_type(ctx).into(),
+            Value::Tuple(_) => todo!(),
         }
     }
 
@@ -249,6 +328,7 @@ impl<'ctx> Value<'ctx> {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
             Value::Boxed(a) => ValueType::Any(*a),
+            Value::Tuple(tup) => ValueType::Tuple(tup.first_ty.into(), tup.second_ty.into()),
         }
     }
 
@@ -258,9 +338,10 @@ impl<'ctx> Value<'ctx> {
             .build_alloca(self.get_type(compiler.context), name);
 
         if let Self::Boxed(b) = self {
+            // we need to copy the underlying data, not the pointer
             compiler
                 .builder
-                .build_memmove(
+                .build_memcpy(
                     ptr,
                     8,
                     b.ptr,
@@ -283,6 +364,7 @@ impl<'ctx> Value<'ctx> {
                 ptr,
                 type_hint: b.type_hint,
             }),
+            Self::Tuple(_) => todo!(),
         }
     }
 }
@@ -302,6 +384,7 @@ impl<'ctx> ValueRef<'ctx> {
                 .get_type()
                 .into(),
             Self::Boxed(b) => b.ptr.get_type().into(),
+            Self::Tuple(t) => panic!("can't get basic type from tuple"),
         }
     }
 
@@ -316,6 +399,7 @@ impl<'ctx> ValueRef<'ctx> {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
             Self::Boxed(b) => ValueType::Any(*b),
+            Self::Tuple(t) => ValueType::Tuple(t.first_ty, t.second_ty),
         }
     }
 
@@ -339,6 +423,7 @@ impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {
             .into(),
             Self::Closure(closure) => Value::Closure(*closure),
             Self::Boxed(boxed) => Value::Boxed(*boxed),
+            Self::Tuple(tup) => Value::Tuple(*tup),
         }
     }
 }
@@ -407,6 +492,7 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
             Value::Str(str) => str.ptr.into(),
             Value::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
             Value::Boxed(boxed) => boxed.ptr.into(),
+            Value::Tuple(tup) => panic!("can't get basic type from tuple"),
         }
     }
 }
@@ -419,6 +505,18 @@ impl<'ctx> Display for ValueType<'ctx> {
             ValueType::Str(_) => write!(f, "str"),
             ValueType::Closure(_) => write!(f, "closure"),
             ValueType::Any(_) => write!(f, "any"),
+            ValueType::Tuple(a, b) => write!(f, "{}&{}", a, b),
+        }
+    }
+}
+impl<'ctx> Display for ValueTypeHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValueTypeHint::Int => write!(f, "int"),
+            ValueTypeHint::Bool => write!(f, "bool"),
+            ValueTypeHint::Str => write!(f, "str"),
+            ValueTypeHint::Closure => write!(f, "closure"),
+            ValueTypeHint::Tuple => write!(f, "tuple"),
         }
     }
 }

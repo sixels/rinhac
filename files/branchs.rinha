@@ -1,15 +1,17 @@
-let result =
-    if (1 + 1 == 2) {
-        let a = if (2 + 2 == 5) {
-            2
+let a =
+    (if (true) {
+        let a = if (false) {
+            true
         } else {
-            "abacate 123"
+            true
         };
-        a
+        123
     } else {
-        false
-    };
+        ""
+    }) + " " + (if (true) {
+    "avocado 123"
+} else {
+    2
+});
 
-
-
-print(result)
+print(a)

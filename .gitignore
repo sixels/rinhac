@@ -1,6 +1,7 @@
 /target
 files/*.out
 output.o
+output.out
 
 core/*.o
 core/*.so

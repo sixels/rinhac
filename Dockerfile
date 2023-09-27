@@ -14,6 +14,11 @@ RUN cargo install --path .
 
 FROM debian:bookworm-slim
 
+WORKDIR /usr/src/rinha
+
+RUN mkdir ./core
+
+COPY --from=builder /usr/src/rinha/core/librinha_core.so ./core/librinha_core.so
 COPY --from=builder /usr/local/cargo/bin/rinhac /usr/local/bin/rinhac
 
 ENTRYPOINT [ "rinhac" ]
