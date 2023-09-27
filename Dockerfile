@@ -1,8 +1,5 @@
 FROM rust:1.71-bookworm as builder
 
-VOLUME [ "/var/rinha" ]
-
-
 RUN apt-get update && apt-get install wget lsb-release software-properties-common gnupg -y
 RUN cd /tmp && wget https://apt.llvm.org/llvm.sh && chmod +x ./llvm.sh && ./llvm.sh 15
 # RUN apt-get update && apt-get install -y llvm-14-dev libpolly-14-dev
@@ -10,9 +7,12 @@ RUN cd /tmp && wget https://apt.llvm.org/llvm.sh && chmod +x ./llvm.sh && ./llvm
 WORKDIR /usr/src/rinha
 COPY . .
 
+RUN make core
 RUN cargo install --path .
 
-FROM debian:bookworm-slim
+FROM gcc:13-bookworm
+
+VOLUME [ "/var/rinha" ]
 
 WORKDIR /usr/src/rinha
 
