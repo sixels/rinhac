@@ -1,9 +1,12 @@
+#![recursion_limit = "9999999999999999999"]
+
 use std::{
-    io::{self, Write},
+    io::{self, BufReader, Write},
     process::Command,
 };
 
 use rinhac::{ast, compiler::Rinhac};
+use serde::Deserialize;
 
 fn main() {
     let ast_file_path = std::env::args()
@@ -11,7 +14,12 @@ fn main() {
         .unwrap_or(String::from("/var/rinha/source.rinha.json"));
     let ast_file = std::fs::File::open(ast_file_path).expect("failed to open file");
 
-    let ast: ast::File = serde_json::from_reader(&ast_file).expect("failed to parse ast file");
+    let mut dese = serde_json::Deserializer::from_reader(ast_file);
+    dese.disable_recursion_limit();
+    let ast = ast::File::deserialize(&mut dese).expect("failed to parse ast file");
+
+    // dese.disable_recursion_limit();
+    // let ast: ast::File = serde_json::from_reader(dese)
 
     Rinhac::compile(ast);
 

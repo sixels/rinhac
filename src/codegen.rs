@@ -174,6 +174,53 @@ impl Codegen for ast::Binary {
                 (Primitive::Int(_), ast::BinaryOp::And | ast::BinaryOp::Or) => {
                     panic!("invalid number operation: {:?}", self.op)
                 }
+                (Primitive::Int(_), ast::BinaryOp::Add) => {
+                    let result = RefCell::new(Enum::build_new(compiler));
+
+                    let current_block = compiler.builder.get_insert_block().unwrap();
+                    let merge_block = compiler
+                        .context
+                        .insert_basic_block_after(current_block, "matchmerge");
+
+                    boxed.build_runtime_match(
+                        compiler,
+                        merge_block,
+                        &[
+                            (ValueTypeHint::Int, &|compiler, value, else_block| {
+                                let Value::Primitive(unboxed) = value else {unreachable!()};
+                                let (pl, pr) = if matches!(lhs_value, Value::Primitive(_)) {
+                                    (primitive, unboxed)
+                                } else {
+                                    (unboxed, primitive)
+                                };
+
+                                if let Ok(op) = Primitive::build_arith(compiler, pl, pr, self.op) {
+                                    result.borrow_mut().build_instance(compiler, op.into());
+                                } else {
+                                    compiler.builder.build_unconditional_branch(else_block);
+                                };
+                            }),
+                            (ValueTypeHint::Str, &|compiler, value, _| {
+                                let Value::Str(unboxed) = value else {unreachable!()};
+                                let number_fmt = Str::build_fmt_primitive(compiler, primitive);
+
+                                let (l, r) = if matches!(lhs_value, Value::Primitive(_)) {
+                                    (number_fmt, unboxed)
+                                } else {
+                                    (unboxed, number_fmt)
+                                };
+
+                                let appended = Str::build_str_append(compiler, l, r);
+                                result
+                                    .borrow_mut()
+                                    .build_instance(compiler, appended.into());
+                            }),
+                        ],
+                    );
+
+                    compiler.builder.position_at_end(merge_block);
+                    Value::Boxed(result.into_inner())
+                }
                 (Primitive::Int(_), _) => {
                     let Value::Primitive(unboxed) = boxed.unwrap_variant(compiler, ValueTypeHint::Int) else {unreachable!()};
 
@@ -214,6 +261,19 @@ impl Codegen for ast::Binary {
                 .into(),
                 _ => panic!("invalid operation between strings"),
             },
+            (Value::Str(string), Value::Primitive(Primitive::Int(number)))
+            | (Value::Primitive(Primitive::Int(number)), Value::Str(string))
+                if self.op == ast::BinaryOp::Add =>
+            {
+                let number_fmt = Str::build_fmt_primitive(compiler, Primitive::Int(number));
+                let (l, r) = if matches!(lhs_value, Value::Str(_)) {
+                    (string, number_fmt)
+                } else {
+                    (number_fmt, string)
+                };
+                Str::build_str_append(compiler, l, r).into()
+            }
+
             (Value::Str(string), Value::Boxed(boxed))
             | (Value::Boxed(boxed), Value::Str(string))
                 if self.op == ast::BinaryOp::Add =>
@@ -388,8 +448,8 @@ impl Codegen for ast::Binary {
                 Value::Boxed(result.into_inner())
             }
             _ => panic!(
-                "invalid operation between {:?} and {:?}",
-                lhs_value, rhs_value,
+                "invalid operation {:?} between {:?} and {:?} at {:?}",
+                self.op, lhs_value, rhs_value, self.location.start
             ),
         };
 

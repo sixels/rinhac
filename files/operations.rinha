@@ -6,17 +6,80 @@ let test = fn(name, value, expected) => {
         0
     } else {
         let _ = print(name + " " + "FAILED");
-        let _ = print("expected '" + expected + "' but got '" + value + "'" );
+        let _ = print("--- expected '" + expected + "' but got '" + value + "'" );
         0
     };
-    let _ = print("");
+    result
+};
+let test_bool = fn(name, value, expected) => {
+    let result = value == expected;
+    let _ = if (result) {
+        let _ = print(name + " " + "PASSED");
+        0
+    } else {
+        let _ = print(name + " " + "FAIELD");
+        let _ = print("--- expected '" + (if (expected) { "true" } else { "false" }) + "' but got '" + (if (value) { "true" }  else { "false" }) + "'");
+        0
+    };
     result
 };
 
-let _ = test("add_num_num", 123 + 456, 579);
-let _ = test("add_num_string", 123 + "def", "123def");
-let _ = test("add_string_num", "abc" + 456, "abc456");
-let _ = test("add_string_string", "abc" + "def", "abcdef");
-let _ = test("empty_string_eq", "" == "", true);
+let _ = test("add num num", 123 + 456, 579);
+let _ = test("sub num num", 123 - 456, 0-333);
+let _ = test("div num num", 3 / 2, 1);
+let _ = test("mult num num", 11 * 2, 22);
+let _ = test("mod num num", 4 % 2, 0);
+
+let _ = test_bool("eq num num", 123456789 == 123456789, true);
+let _ = test_bool("false eq num num", 123456789 == 45679, false);
+let _ = test_bool("neq num num", 123456789 != 45679, true);
+let _ = test_bool("false neq num num", 123456789 != 123456789, false);
+
+let _ = test_bool("le num num", 123 < 456, true);
+let _ = test_bool("false le num num", 456 < 123, false);
+let _ = test_bool("lt num num", 456 <= 456, true);
+let _ = test_bool("false lte num num", 124 <= 123, false);
+let _ = test_bool("gt num num", 456 > 123, true);
+let _ = test_bool("false gt num num", 123 > 456, false);
+let _ = test_bool("gte num num", 123 >= 124, false);
+let _ = test_bool("false gte num num", 123 >= 124, false);
+
+let _ = test("add num str", 123 + "def", "123def");
+let _ = test("add str num", "abc" + 456, "abc456");
+let _ = test("add str str", "abc" + "def", "abcdef");
+let _ = test("eq empty str", "", "");
+
+let _ = test_bool("eq str str", "foobarbaz" == "foobarbaz", true);
+let _ = test_bool("false eq str str", "foobarbaz" == "foobarbax", false);
+
+let _ = test("add boxed num num", (if (true) {123} else {""}) + 456, 579);
+let _ = test("add num boxed num", 123 +  (if (true) { 456 } else {""}), 579);
+let _ = test("add boxed num boxed num", (if (true) {123} else {""}) + (if (true) { 456 } else {""}), 579);
+
+let _ = test("sub boxed num num", (if (true) {123} else {""}) - 456, 0-333);
+let _ = test("sub num boxed num", 123 - (if (true) { 456 } else {""}), 0-333);
+let _ = test("sub boxed num boxed num", (if (true) {123} else {""}) - (if (true) { 456 } else {""}), 0-333);
+
+
+let _ = test("add boxed num str", (if (true) { 123 } else {false}) + "def", "123def");
+let _ = test("add num boxed str", (123 + (if (true) {"def"} else {false})), "123def");
+let _ = test("add boxed num boxed str", (if (true) { 123 } else {false}) + (if (true) {"def"} else {false}), "123def");
+
+let _ = test("add boxed str num",  (if (true) {"abc"} else {false}) + 456, "abc456");
+let _ = test("add str boxed num",  "abc" + (if (true) { 456 } else {false}), "abc456");
+let _ = test("add boxed str boxed num",  (if (true) {"abc"} else {false}) + (if (true) { 456 } else {false}), "abc456");
+
+let _ = test("add boxed str str", (if (true) {"abc"} else {false}) + "def", "abcdef");
+let _ = test("add str boxed str", "abc" + (if (true) {"def"} else {false}), "abcdef");
+let _ = test("add boxed str boxed str", (if (true) {"abc"} else {false}) + (if (true) {"def"} else {false}), "abcdef");
+
+let _ = test("add boxed str str", (if (true) {"abc"} else {false}) + "def", "abcdef");
+let _ = test("add str boxed str", "abc" + (if (true) {"def"} else {false}), "abcdef");
+let _ = test("add boxed str boxed str", (if (true) {"abc"} else {false}) + (if (true) {"def"} else {false}), "abcdef");
+
+let _ = test("eq empty boxed str", (if (true) {""} else {false}), "");
+
+let _ = test("num tuple first eq", first((312,123)), 312);
+let _ = test("num tuple second eq", second((1,2123)), 2123);
 
 print("OK")
