@@ -1,0 +1,22 @@
+let factorial = fn (n) => {
+    if (n == 0) {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+};
+
+let createTuple = fn (s, n) => {
+    let repeatedString = fn (str, times) => {
+        if (times == 1) {
+            str
+        } else {
+            str + repeatedString(str, times - 1)
+        }
+    };
+    
+    (s, repeatedString(s, n))
+};
+
+let factResult = factorial(14);
+ print("calculated fact: " + factResult)

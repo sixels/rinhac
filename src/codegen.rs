@@ -440,6 +440,34 @@ impl Codegen for ast::Binary {
                                 ],
                             );
                         }),
+                        (ValueTypeHint::Str, &|compiler, l, else_block| {
+                            let Value::Str(l) = l else {unreachable!()};
+
+                            br.build_runtime_match(
+                                compiler,
+                                merge_block,
+                                &[
+                                    (ValueTypeHint::Str, &|compiler, r, _| {
+                                        let Value::Str(r) = r else {unreachable!()};
+                                        let appended =
+                                            Str::build_str_append(compiler, l, r);
+                                        result
+                                            .borrow_mut()
+                                            .build_instance(compiler, appended.into())
+                                    }),
+                                    (ValueTypeHint::Int, &|compiler, r, _| {
+                                        let Value::Primitive(r) = r else {unreachable!()};
+                                        let number_fmt = Str::build_fmt_primitive(compiler, r);
+
+                                        let appended =
+                                            Str::build_str_append(compiler, l, number_fmt);
+                                        result
+                                            .borrow_mut()
+                                            .build_instance(compiler, appended.into())
+                                    }),
+                                ],
+                            );
+                        })
                     ],
                 );
 
