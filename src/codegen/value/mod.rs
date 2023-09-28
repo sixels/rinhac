@@ -18,6 +18,7 @@ use super::{
     traits::{AsBasicType, DerefValue},
 };
 
+use self::tuple::build_tuple_type;
 pub use self::{closure::Closure, enums::Enum, tuple::Tuple};
 
 #[derive(Debug, Clone, Copy)]
@@ -313,7 +314,7 @@ impl<'ctx> Value<'ctx> {
                 .get_type()
                 .into(),
             Value::Boxed(_) => Enum::generic_type(ctx).into(),
-            Value::Tuple(_) => todo!(),
+            Value::Tuple(t) => build_tuple_type(ctx, t.first_ty, t.second_ty).into(),
         }
     }
 
@@ -328,7 +329,7 @@ impl<'ctx> Value<'ctx> {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
             Value::Boxed(a) => ValueType::Any(*a),
-            Value::Tuple(tup) => ValueType::Tuple(tup.first_ty.into(), tup.second_ty.into()),
+            Value::Tuple(tup) => todo!(),
         }
     }
 
@@ -337,22 +338,38 @@ impl<'ctx> Value<'ctx> {
             .builder
             .build_alloca(self.get_type(compiler.context), name);
 
-        if let Self::Boxed(b) = self {
-            // we need to copy the underlying data, not the pointer
-            compiler
-                .builder
-                .build_memcpy(
-                    ptr,
-                    8,
-                    b.ptr,
-                    8,
-                    compiler.context.i32_type().const_int(24, false),
-                )
-                .unwrap();
-        } else {
-            compiler
-                .builder
-                .build_store(ptr, BasicValueEnum::from(self));
+        match self {
+            Self::Boxed(b) => {
+                // we need to copy the underlying data, not the pointer
+                compiler
+                    .builder
+                    .build_memcpy(
+                        ptr,
+                        8,
+                        b.ptr,
+                        8,
+                        compiler.context.i32_type().const_int(24, false),
+                    )
+                    .unwrap();
+            }
+            Self::Tuple(t) => {
+                // we need to copy the underlying data, not the pointer
+                compiler
+                    .builder
+                    .build_memcpy(
+                        ptr,
+                        8,
+                        t.ptr,
+                        8,
+                        compiler.context.i32_type().const_int(50, false),
+                    )
+                    .unwrap();
+            }
+            _ => {
+                compiler
+                    .builder
+                    .build_store(ptr, BasicValueEnum::from(self));
+            }
         }
 
         match self {
@@ -364,7 +381,11 @@ impl<'ctx> Value<'ctx> {
                 ptr,
                 type_hint: b.type_hint,
             }),
-            Self::Tuple(_) => todo!(),
+            Self::Tuple(t) => ValueRef::Tuple(Tuple {
+                ptr,
+                first_ty: t.first_ty,
+                second_ty: t.second_ty,
+            }),
         }
     }
 }
@@ -399,7 +420,7 @@ impl<'ctx> ValueRef<'ctx> {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
             Self::Boxed(b) => ValueType::Any(*b),
-            Self::Tuple(t) => ValueType::Tuple(t.first_ty, t.second_ty),
+            Self::Tuple(t) => todo!(),
         }
     }
 
@@ -492,7 +513,7 @@ impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
             Value::Str(str) => str.ptr.into(),
             Value::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
             Value::Boxed(boxed) => boxed.ptr.into(),
-            Value::Tuple(tup) => panic!("can't get basic type from tuple"),
+            Value::Tuple(tup) => tup.ptr.into(),
         }
     }
 }
@@ -509,7 +530,7 @@ impl<'ctx> Display for ValueType<'ctx> {
         }
     }
 }
-impl<'ctx> Display for ValueTypeHint {
+impl Display for ValueTypeHint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ValueTypeHint::Int => write!(f, "int"),

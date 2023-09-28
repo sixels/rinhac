@@ -18,8 +18,6 @@ pub struct Enum<'ctx> {
     pub ptr: PointerValue<'ctx>,
     pub type_hint: BitFlags<ValueTypeHint>,
 }
-unsafe impl<'ctx> Send for Enum<'ctx> {}
-unsafe impl<'ctx> Sync for Enum<'ctx> {}
 
 type RuntimeMatchCallback<'a, 'ctx> =
     &'a dyn Fn(&'a Compiler<'a, 'ctx>, Value<'ctx>, BasicBlock<'ctx>);
@@ -46,8 +44,8 @@ impl<'ctx> Enum<'ctx> {
         context.struct_type(
             &[
                 context.i8_type().into(),
-                // pointer size
-                context.i8_type().array_type(23).into(),
+                // todo: update with tuple size
+                context.i8_type().array_type(24).into(),
             ],
             false,
         )

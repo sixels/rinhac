@@ -97,11 +97,14 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             ast::Term::If(conditional) => (conditional.codegen(self), None),
 
             ast::Term::Var(v) => (v.codegen(self).codegen_value(self), None),
-            // ast::Term::Tuple(tuple) => (tuple.codegen(self).into(), None),
+            ast::Term::Tuple(tuple) => (tuple.codegen(self).into(), None),
             ast::Term::Binary(binary) => (binary.codegen(self), None),
             ast::Term::Bool(bool) => (bool.codegen(self).into(), None),
             ast::Term::Int(int) => (int.codegen(self).into(), None),
             ast::Term::Str(str) => (str.codegen(self).into(), None),
+
+            ast::Term::First(f) => (f.codegen(self), None),
+            ast::Term::Second(s) => (s.codegen(self), None),
 
             ast::Term::Function(definition) => {
                 let function: std::rc::Rc<std::cell::RefCell<Function<'_>>> =
@@ -122,7 +125,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             .position_at_end(self.entry_function.get_last_basic_block().unwrap());
         self.builder.build_return(None);
 
-        if !self.entry_function.verify(false) {
+        if !self.entry_function.verify(true) {
             // todo: error handling
             // self.entry_function.print_to_stderr();
             eprintln!("----------IR--------");

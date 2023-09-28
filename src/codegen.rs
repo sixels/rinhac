@@ -20,7 +20,7 @@ use crate::{
 use self::{
     core::CoreFunction,
     traits::{Codegen, CodegenValue, DerefValue},
-    value::{closure::build_captures_struct, Primitive, Str, Value, ValueTypeHint},
+    value::{closure::build_captures_struct, Primitive, Str, Tuple, Value, ValueTypeHint},
 };
 
 pub const FIRST_BLOCK_NAME: &str = "start";
@@ -46,9 +46,9 @@ impl<'ctx> CodegenValue<'ctx> for ast::Term {
             }
             ast::Term::Let(_) => todo!(),
             ast::Term::Print(p) => p.codegen(compiler).into(),
-            ast::Term::First(_) => todo!(),
-            ast::Term::Second(_) => todo!(),
-            ast::Term::Tuple(_) => todo!(),
+            ast::Term::First(f) => f.codegen(compiler),
+            ast::Term::Second(s) => s.codegen(compiler),
+            ast::Term::Tuple(t) => t.codegen(compiler).into(),
         }
     }
 }
@@ -69,6 +69,40 @@ impl Codegen for ast::Bool {
                 .bool_type()
                 .const_int(self.value as _, false),
         )
+    }
+}
+
+impl Codegen for ast::Tuple {
+    type R<'ctx> = Tuple<'ctx>;
+    fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
+        let first = self.first.codegen_value(compiler);
+        let second = self.second.codegen_value(compiler);
+
+        Tuple::build_new(compiler, first, second)
+    }
+}
+
+impl Codegen for ast::First {
+    type R<'ctx> = Value<'ctx>;
+    fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
+        let val = self.value.codegen_value(compiler);
+        let Value::Tuple(t) = val else {
+            panic!("invalid operation")
+        };
+
+        t.unwrap_first(compiler)
+    }
+}
+
+impl Codegen for ast::Second {
+    type R<'ctx> = Value<'ctx>;
+    fn codegen<'ctx>(&self, compiler: &mut Compiler<'_, 'ctx>) -> Self::R<'ctx> {
+        let val = self.value.codegen_value(compiler);
+        let Value::Tuple(t) = val else {
+            panic!("invalid operation")
+        };
+
+        t.unwrap_second(compiler)
     }
 }
 
@@ -440,7 +474,42 @@ impl Codegen for ast::Print {
                         .into_int_value(),
                 )
             }
-            Value::Tuple(_) => todo!(),
+            Value::Tuple(tup) => {
+                let tup_buf = compiler
+                    .builder
+                    .build_array_malloc(
+                        compiler.context.i8_type(),
+                        compiler.context.i32_type().const_int(50, false),
+                        "",
+                    )
+                    .unwrap();
+
+                let tup_str_len = compiler
+                    .builder
+                    .build_indirect_call(
+                        compiler
+                            .core_functions
+                            .get(CoreFunction::FmtTuple)
+                            .get_type(),
+                        compiler
+                            .core_functions
+                            .get(CoreFunction::FmtTuple)
+                            .as_global_value()
+                            .as_pointer_value(),
+                        &[tup_buf.into(), tup.ptr.into()],
+                        "",
+                    )
+                    .as_any_value_enum()
+                    .into_int_value();
+
+                compiler.builder.build_call(
+                    compiler.core_functions.get(CoreFunction::PrintStr),
+                    &[tup_buf.into(), tup_str_len.into()],
+                    "",
+                );
+
+                Str::new(tup_buf, tup_str_len)
+            }
         };
 
         let _ = compiler.builder.build_call(
