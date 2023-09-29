@@ -21,14 +21,14 @@ use super::{
 use self::tuple::{build_tuple_type, store_value_into};
 pub use self::{closure::Closure, enums::Enum, tuple::Tuple};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ValueType<'ctx> {
     Int,
     Bool,
     Str(IntValue<'ctx>),
     Closure(PointerType<'ctx>),
     Any(Enum<'ctx>),
-    Tuple(ValueTypeHint, ValueTypeHint),
+    Tuple(Box<(ValueType<'ctx>, ValueType<'ctx>)>),
 }
 
 impl<'ctx> From<ValueType<'ctx>> for BitFlags<ValueTypeHint> {
@@ -39,7 +39,7 @@ impl<'ctx> From<ValueType<'ctx>> for BitFlags<ValueTypeHint> {
             ValueType::Str(_) => ValueTypeHint::Str.into(),
             ValueType::Closure(_) => ValueTypeHint::Closure.into(),
             ValueType::Any(a) => a.type_hint,
-            ValueType::Tuple(a, b) => ValueTypeHint::Tuple.into(),
+            ValueType::Tuple(_t) => ValueTypeHint::Tuple.into(),
         }
     }
 }
@@ -76,13 +76,15 @@ impl ValueTypeHint {
 
 impl<'ctx> AsBasicType<'ctx> for ValueType<'ctx> {
     fn as_basic_type(&self, ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
-        match *self {
+        match self {
             Self::Int => ctx.i32_type().into(),
             Self::Bool => ctx.bool_type().into(),
             Self::Str(_) => ctx.i8_type().ptr_type(Default::default()).into(),
-            Self::Closure(t) => t.into(),
+            Self::Closure(t) => (*t).into(),
             Self::Any(_) => Enum::generic_type(ctx).ptr_type(Default::default()).into(),
-            Self::Tuple(a, b) => todo!(),
+            Self::Tuple(t) => build_tuple_type(ctx, &t.0, &t.1)
+                .ptr_type(Default::default())
+                .into(),
         }
     }
 }
@@ -98,7 +100,7 @@ impl<'ctx> AsBasicType<'ctx> for ValueTypeHint {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Value<'ctx> {
     Primitive(Primitive<'ctx>),
     Str(Str<'ctx>),
@@ -107,7 +109,7 @@ pub enum Value<'ctx> {
     Tuple(Tuple<'ctx>),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ValueRef<'ctx> {
     Primitive(PrimitiveRef<'ctx>),
     Str(StrRef<'ctx>),
@@ -316,7 +318,7 @@ impl<'ctx> Value<'ctx> {
                 .get_type()
                 .into(),
             Value::Boxed(_) => Enum::generic_type(ctx).into(),
-            Value::Tuple(t) => build_tuple_type(ctx, t.first_ty, t.second_ty).into(),
+            Value::Tuple(t) => build_tuple_type(ctx, &t.first_ty, &t.second_ty).into(),
         }
     }
 
@@ -331,7 +333,9 @@ impl<'ctx> Value<'ctx> {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
             Value::Boxed(a) => ValueType::Any(*a),
-            Value::Tuple(tup) => todo!(),
+            Value::Tuple(tup) => {
+                ValueType::Tuple(Box::new((tup.first_ty.clone(), tup.second_ty.clone())))
+            }
         }
     }
 
@@ -389,8 +393,8 @@ impl<'ctx> Value<'ctx> {
             }),
             Self::Tuple(t) => ValueRef::Tuple(Tuple {
                 ptr,
-                first_ty: t.first_ty,
-                second_ty: t.second_ty,
+                first_ty: t.first_ty.clone(),
+                second_ty: t.second_ty.clone(),
             }),
         }
     }
@@ -411,7 +415,7 @@ impl<'ctx> ValueRef<'ctx> {
                 .get_type()
                 .into(),
             Self::Boxed(b) => b.ptr.get_type().into(),
-            Self::Tuple(t) => panic!("can't get basic type from tuple"),
+            Self::Tuple(_t) => panic!("can't get basic type from tuple"),
         }
     }
 
@@ -426,7 +430,7 @@ impl<'ctx> ValueRef<'ctx> {
                 ValueType::Closure(c.funct.as_global_value().as_pointer_value().get_type())
             }
             Self::Boxed(b) => ValueType::Any(*b),
-            Self::Tuple(t) => todo!(),
+            Self::Tuple(_t) => todo!(),
         }
     }
 
@@ -450,7 +454,7 @@ impl<'ctx> DerefValue<'ctx> for ValueRef<'ctx> {
             .into(),
             Self::Closure(closure) => Value::Closure(*closure),
             Self::Boxed(boxed) => Value::Boxed(*boxed),
-            Self::Tuple(tup) => Value::Tuple(*tup),
+            Self::Tuple(tup) => Value::Tuple(tup.clone()),
         }
     }
 }
@@ -514,8 +518,8 @@ impl<'ctx> From<Primitive<'ctx>> for BasicValueEnum<'ctx> {
 
 impl<'ctx> From<&Value<'ctx>> for BasicValueEnum<'ctx> {
     fn from(value: &Value<'ctx>) -> Self {
-        match *value {
-            Value::Primitive(primitive) => primitive.into(),
+        match value {
+            Value::Primitive(primitive) => (*primitive).into(),
             Value::Str(str) => str.ptr.into(),
             Value::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
             Value::Boxed(boxed) => boxed.ptr.into(),
@@ -532,7 +536,7 @@ impl<'ctx> Display for ValueType<'ctx> {
             ValueType::Str(_) => write!(f, "str"),
             ValueType::Closure(_) => write!(f, "closure"),
             ValueType::Any(_) => write!(f, "any"),
-            ValueType::Tuple(a, b) => write!(f, "{}&{}", a, b),
+            ValueType::Tuple(t) => write!(f, "{}&{}", t.0, t.1),
         }
     }
 }

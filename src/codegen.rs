@@ -146,7 +146,7 @@ impl Codegen for ast::Binary {
         let lhs_value = self.lhs.codegen_value(compiler);
         let rhs_value = self.rhs.codegen_value(compiler);
 
-        let result = match (lhs_value, rhs_value) {
+        let result = match (lhs_value.clone(), rhs_value.clone()) {
             (Value::Primitive(pl), Value::Primitive(pr)) => {
                 Primitive::build_arith(compiler, pl, pr, self.op)
                     .unwrap()
@@ -195,7 +195,7 @@ impl Codegen for ast::Binary {
                                 };
 
                                 if let Ok(op) = Primitive::build_arith(compiler, pl, pr, self.op) {
-                                    result.borrow_mut().build_instance(compiler, op.into());
+                                    result.borrow_mut().build_instance(compiler, &op.into());
                                 } else {
                                     compiler.builder.build_unconditional_branch(else_block);
                                 };
@@ -213,7 +213,7 @@ impl Codegen for ast::Binary {
                                 let appended = Str::build_str_append(compiler, l, r);
                                 result
                                     .borrow_mut()
-                                    .build_instance(compiler, appended.into());
+                                    .build_instance(compiler, &appended.into());
                             }),
                         ],
                     );
@@ -408,7 +408,7 @@ impl Codegen for ast::Binary {
 
                             if let Ok(op) = Primitive::build_arith(compiler, l, r, self.op)
                             {
-                                result.borrow_mut().build_instance(compiler, op.into());
+                                result.borrow_mut().build_instance(compiler, &op.into());
                             } else {
                                 compiler.builder.build_unconditional_branch(else_block);
                             };
@@ -425,7 +425,7 @@ impl Codegen for ast::Binary {
                                         if let Ok(op) =
                                             Primitive::build_arith(compiler, l, r, self.op)
                                         {
-                                            result.borrow_mut().build_instance(compiler, op.into());
+                                            result.borrow_mut().build_instance(compiler, &op.into());
                                         } else {
                                             compiler.builder.build_unconditional_branch(else_block);
                                         }
@@ -438,7 +438,7 @@ impl Codegen for ast::Binary {
                                             Str::build_str_append(compiler, number_fmt, r);
                                         result
                                             .borrow_mut()
-                                            .build_instance(compiler, appended.into())
+                                            .build_instance(compiler, &appended.into())
                                     }),
                                 ],
                             );
@@ -459,7 +459,7 @@ impl Codegen for ast::Binary {
                                                 Str::build_str_append(compiler, l, r);
                                             result
                                                 .borrow_mut()
-                                                .build_instance(compiler, appended.into())
+                                                .build_instance(compiler, &appended.into())
                                         }),
                                         (ValueTypeHint::Int, &|compiler, r, _| {
                                             let Value::Primitive(r) = r else {unreachable!()};
@@ -469,7 +469,7 @@ impl Codegen for ast::Binary {
                                                 Str::build_str_append(compiler, l, number_fmt);
                                             result
                                                 .borrow_mut()
-                                                .build_instance(compiler, appended.into())
+                                                .build_instance(compiler, &appended.into())
                                         }),
                                     ],
                                 );
@@ -592,7 +592,7 @@ impl Codegen for ast::Call {
             .iter()
             .map(|arg| {
                 let val = arg.codegen_value(compiler);
-                (val, matches!(val, Value::Str(_)))
+                (val.clone(), matches!(val, Value::Str(_)))
             })
             .collect::<Vec<_>>();
 
@@ -616,11 +616,7 @@ impl Codegen for ast::Call {
                 let f = funct.borrow();
                 f.definitions
                     .iter()
-                    .find(|(defs, _)| {
-                        defs.iter()
-                            .zip(arguments_types.iter())
-                            .all(|(&a, &b)| a == b)
-                    })
+                    .find(|(defs, _)| defs.iter().zip(arguments_types.iter()).all(|(a, b)| a == b))
                     .map(|(_, cl)| *cl)
             };
 
@@ -800,7 +796,7 @@ impl Codegen for ast::If {
             compiler.scope.clone_from(&then_scope);
 
             let then_ret = compiler.compile_block(&self.then);
-            enum_builder.build_instance(compiler, then_ret);
+            enum_builder.build_instance(compiler, &then_ret);
             then_ret
         };
 
@@ -816,7 +812,7 @@ impl Codegen for ast::If {
             compiler.scope.clone_from(&else_scope);
 
             let else_ret = compiler.compile_block(&self.otherwise);
-            enum_builder.build_instance(compiler, else_ret);
+            enum_builder.build_instance(compiler, &else_ret);
             else_ret
         };
 

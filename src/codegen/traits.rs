@@ -22,10 +22,8 @@ pub trait AsBasicType<'ctx> {
     fn as_basic_type(&self, context: &'ctx Context) -> BasicTypeEnum<'ctx>;
 }
 
-impl<'ctx, T: Into<Value<'ctx>> + Copy> CodegenValue<'ctx> for T {
+impl<'ctx, T: Into<Value<'ctx>> + Clone> CodegenValue<'ctx> for T {
     fn codegen_value(&self, _: &mut Compiler<'_, 'ctx>) -> Value<'ctx> {
-        (*self).into()
-        // let a = *self;
-        // a.into()
+        self.clone().into()
     }
 }

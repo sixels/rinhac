@@ -62,7 +62,7 @@ impl<'ctx> Enum<'ctx> {
             .struct_type(&[padding.array_type(pad_size).into(), data_type], false)
     }
 
-    pub fn build_instance(&mut self, compiler: &Compiler<'_, 'ctx>, value: Value<'ctx>) {
+    pub fn build_instance(&mut self, compiler: &Compiler<'_, 'ctx>, value: &Value<'ctx>) {
         let value_type = value.get_known_type();
         let (tag, pad, data_type) = match value_type {
             ValueType::Any(a) => {
@@ -113,7 +113,7 @@ impl<'ctx> Enum<'ctx> {
                 (compiler.context.i32_type(), 1),
                 compiler.context.i32_type().into(),
             ),
-            ValueType::Tuple(_, _) => todo!(),
+            ValueType::Tuple(_) => todo!(),
         };
 
         let value_type_hints: BitFlags<ValueTypeHint> = value_type.into();

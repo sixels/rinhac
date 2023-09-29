@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-use super::{enums::Enum, Primitive, Str, Value, ValueType, ValueTypeHint};
+use super::{enums::Enum, Primitive, Str, Tuple, Value, ValueType, ValueTypeHint};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Closure<'ctx> {
@@ -53,7 +53,11 @@ impl<'ctx> Closure<'ctx> {
         let funct_name_monomorphized = if arguments.is_empty() {
             function.unique_name()
         } else {
-            function.monomorph_name(params_known_types.iter().map(|((p, l), _)| (*p, **l)))
+            function.monomorph_name(
+                params_known_types
+                    .iter()
+                    .map(|((p, l), _)| (p.clone(), **l)),
+            )
         };
 
         // get llvm param metadatas
@@ -264,8 +268,12 @@ impl<'ctx> Closure<'ctx> {
                             ptr: param.into_pointer_value(),
                             type_hint: a.type_hint,
                         })),
+                        ValueType::Tuple(t) => Variable::Value(super::ValueRef::Tuple(Tuple {
+                            ptr: param.into_pointer_value(),
+                            first_ty: t.0,
+                            second_ty: t.1,
+                        })),
                         ValueType::Closure(_) => todo!(),
-                        ValueType::Tuple(_, _) => todo!(),
                     },
                 ));
                 i += 1;
@@ -329,7 +337,7 @@ impl<'ctx> Closure<'ctx> {
                                     }
                                     ValueType::Any(_) => Enum::generic_type(compiler.context)
                                         .ptr_type(Default::default()),
-                                    ValueType::Tuple(_, _) => todo!(),
+                                    ValueType::Tuple(_) => todo!(),
                                 },
                                 load_capture,
                                 "",
@@ -379,7 +387,7 @@ impl<'ctx> Closure<'ctx> {
         let mut sret = Enum::from_ptr(self.funct.get_nth_param(0).unwrap().into_pointer_value());
         let ret_value = compiler.compile_block(function.body.value.as_ref());
 
-        sret.build_instance(compiler, ret_value);
+        sret.build_instance(compiler, &ret_value);
         self.returns = sret.type_hint;
 
         compiler.builder.build_return(None);

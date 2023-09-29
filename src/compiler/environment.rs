@@ -145,7 +145,7 @@ pub enum Variable<'ctx> {
 
 impl<'ctx> Variable<'ctx> {
     pub fn get_ptr(&self, compiler: &Compiler<'_, 'ctx>) -> PointerValue<'ctx> {
-        match *self {
+        match self.clone() {
             Variable::Value(v) => match v {
                 ValueRef::Primitive(PrimitiveRef::Bool(b)) => b,
                 ValueRef::Primitive(PrimitiveRef::Int(i)) => i,
@@ -191,7 +191,7 @@ impl<'ctx> CodegenValue<'ctx> for Variable<'ctx> {
     fn codegen_value(&self, compiler: &mut Compiler<'_, 'ctx>) -> Value<'ctx> {
         match self {
             Variable::Value(v) => v.build_deref(compiler),
-            Variable::Constant(c) => *c,
+            Variable::Constant(c) => c.clone(),
             // returns 0 for now
             Variable::Function(_) => Value::Primitive(crate::codegen::value::Primitive::Int(
                 compiler.context.i32_type().const_int(0, false),
@@ -283,7 +283,7 @@ impl<'ctx> Function<'ctx> {
             defined_params
                 .iter()
                 .zip(params.iter())
-                .all(|(&a, &b)| a == b)
+                .all(|(a, b)| a == b)
         }) {
             def.1
         } else {

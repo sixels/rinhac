@@ -11,7 +11,7 @@ use crate::{
 
 use super::{Primitive, Str, Value, ValueType};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Tuple<'ctx> {
     pub ptr: PointerValue<'ctx>,
     pub first_ty: ValueType<'ctx>,
@@ -29,8 +29,8 @@ impl<'ctx> Tuple<'ctx> {
 
         let ty = build_tuple_type(
             compiler.context,
-            first.get_known_type(),
-            second.get_known_type(),
+            &first.get_known_type(),
+            &second.get_known_type(),
         );
 
         let ptr = compiler.builder.build_alloca(ty, "");
@@ -49,22 +49,22 @@ impl<'ctx> Tuple<'ctx> {
         }
     }
 
-    pub fn unwrap_first(self, compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
+    pub fn unwrap_first(&self, compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
         self.unwrap(compiler, true)
     }
 
-    pub fn unwrap_second(self, compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
+    pub fn unwrap_second(&self, compiler: &Compiler<'_, 'ctx>) -> Value<'ctx> {
         self.unwrap(compiler, false)
     }
 
     fn unwrap(&self, compiler: &Compiler<'_, 'ctx>, first: bool) -> Value<'ctx> {
         let (ty, index) = if first {
-            (self.first_ty, 0)
+            (self.first_ty.clone(), 0)
         } else {
-            (self.second_ty, 1)
+            (self.second_ty.clone(), 1)
         };
 
-        let tup_ty = build_tuple_type(compiler.context, self.first_ty, self.second_ty);
+        let tup_ty = build_tuple_type(compiler.context, &self.first_ty, &self.second_ty);
         match ty {
             ValueType::Int => {
                 let num = compiler
@@ -224,8 +224,8 @@ fn fmt_value<'ctx>(compiler: &Compiler<'_, 'ctx>, value: Value<'ctx>) -> Str<'ct
 
 pub fn build_tuple_type<'ctx>(
     ctx: &'ctx Context,
-    first: ValueType<'ctx>,
-    second: ValueType<'ctx>,
+    first: &ValueType<'ctx>,
+    second: &ValueType<'ctx>,
 ) -> StructType<'ctx> {
     let first_ty = if let ValueType::Str(_) = first {
         string_struct(ctx).into()
