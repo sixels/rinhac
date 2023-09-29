@@ -11,7 +11,7 @@ use crate::{
     compiler::Compiler,
 };
 
-use super::{Primitive, Str, Value, ValueType, ValueTypeHint};
+use super::{tuple::build_tuple_type, Primitive, Str, Value, ValueType, ValueTypeHint};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Enum<'ctx> {
@@ -64,7 +64,7 @@ impl<'ctx> Enum<'ctx> {
 
     pub fn build_instance(&mut self, compiler: &Compiler<'_, 'ctx>, value: &Value<'ctx>) {
         let value_type = value.get_known_type();
-        let (tag, pad, data_type) = match value_type {
+        let (tag, pad, data_type) = match &value_type {
             ValueType::Any(a) => {
                 compiler
                     .builder
@@ -113,7 +113,21 @@ impl<'ctx> Enum<'ctx> {
                 (compiler.context.i32_type(), 1),
                 compiler.context.i32_type().into(),
             ),
-            ValueType::Tuple(_) => todo!(),
+            ValueType::Tuple(t) => (
+                ValueTypeHint::Tuple,
+                (compiler.context.i8_type(), 10),
+                compiler
+                    .context
+                    .struct_type(
+                        &[
+                            compiler.context.i8_type().into(),
+                            compiler.context.i8_type().into(),
+                            build_tuple_type(compiler.context, &t.0, &t.1).into(),
+                        ],
+                        false,
+                    )
+                    .into(),
+            ),
         };
 
         let value_type_hints: BitFlags<ValueTypeHint> = value_type.into();
@@ -172,6 +186,9 @@ impl<'ctx> Enum<'ctx> {
                     )
                     .unwrap();
                 compiler.builder.build_store(len_ptr, s.len);
+            }
+            Value::Tuple(_t) => {
+                todo!()
             }
             _ => {
                 compiler
