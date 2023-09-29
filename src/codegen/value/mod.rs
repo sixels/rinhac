@@ -18,7 +18,7 @@ use super::{
     traits::{AsBasicType, DerefValue},
 };
 
-use self::tuple::build_tuple_type;
+use self::tuple::{build_tuple_type, store_value_into};
 pub use self::{closure::Closure, enums::Enum, tuple::Tuple};
 
 #[derive(Debug, Clone, Copy)]
@@ -82,7 +82,7 @@ impl<'ctx> AsBasicType<'ctx> for ValueType<'ctx> {
             Self::Str(_) => ctx.i8_type().ptr_type(Default::default()).into(),
             Self::Closure(t) => t.into(),
             Self::Any(_) => Enum::generic_type(ctx).ptr_type(Default::default()).into(),
-            Self::Tuple(a, b) => panic!("can't get basic type from tuple"),
+            Self::Tuple(a, b) => todo!(),
         }
     }
 }
@@ -229,6 +229,10 @@ impl<'ctx> Str<'ctx> {
         let append_buf = compiler
             .builder
             .build_array_alloca(compiler.context.i8_type(), size, "");
+        compiler
+            .builder
+            .build_memset(append_buf, 1, compiler.context.i8_type().const_zero(), size)
+            .unwrap();
 
         compiler
             .builder
@@ -249,20 +253,18 @@ impl<'ctx> Str<'ctx> {
     }
 
     pub fn build_fmt_primitive(compiler: &Compiler<'_, 'ctx>, value: Primitive<'ctx>) -> Self {
-        let number_buf = compiler
-            .builder
-            .build_malloc(
-                compiler
-                    .context
-                    .i8_type()
-                    .array_type(if matches!(value, Primitive::Int(_)) {
-                        24
-                    } else {
-                        6
-                    }),
-                "",
-            )
-            .unwrap();
+        let number_buf = compiler.builder.build_array_alloca(
+            compiler.context.i8_type(),
+            compiler.context.i32_type().const_int(
+                if matches!(value, Primitive::Int(_)) {
+                    24
+                } else {
+                    6
+                },
+                false,
+            ),
+            "",
+        );
 
         let number_len = compiler
             .builder
@@ -296,7 +298,7 @@ impl<'ctx> Value<'ctx> {
             Self::Str(str) => str.ptr.into(),
             Self::Closure(closure) => closure.funct.as_global_value().as_pointer_value().into(),
             Self::Boxed(_) => panic!("use boxed unwrap method to get the value"),
-            Self::Tuple(tup) => todo!(),
+            Self::Tuple(_) => todo!(),
         }
     }
 
@@ -334,9 +336,8 @@ impl<'ctx> Value<'ctx> {
     }
 
     pub fn build_as_ref(&self, compiler: &Compiler<'_, 'ctx>, name: &str) -> ValueRef<'ctx> {
-        let ptr: PointerValue<'_> = compiler
-            .builder
-            .build_alloca(self.get_type(compiler.context), name);
+        let ty = self.get_type(compiler.context);
+        let ptr: PointerValue<'_> = compiler.builder.build_alloca(ty, name);
 
         match self {
             Self::Boxed(b) => {
@@ -353,17 +354,22 @@ impl<'ctx> Value<'ctx> {
                     .unwrap();
             }
             Self::Tuple(t) => {
-                // we need to copy the underlying data, not the pointer
-                compiler
-                    .builder
-                    .build_memcpy(
-                        ptr,
-                        8,
-                        t.ptr,
-                        8,
-                        compiler.context.i32_type().const_int(50, false),
-                    )
-                    .unwrap();
+                let first_ptr = compiler.builder.build_struct_gep(ty, ptr, 0, "").unwrap();
+                store_value_into(compiler, t.unwrap_first(compiler), first_ptr);
+
+                let second_ptr = compiler.builder.build_struct_gep(ty, ptr, 1, "").unwrap();
+                store_value_into(compiler, t.unwrap_second(compiler), second_ptr);
+
+                // compiler
+                //     .builder
+                //     .build_memcpy(
+                //         ptr,
+                //         8,
+                //         t.ptr,
+                //         8,
+                //         compiler.context.i32_type().const_int(24, false),
+                //     )
+                //     .unwrap();
             }
             _ => {
                 compiler

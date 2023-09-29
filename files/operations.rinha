@@ -35,9 +35,9 @@ let _ = test_bool("false eq num num", 123456789 == 45679, false);
 let _ = test_bool("neq num num", 123456789 != 45679, true);
 let _ = test_bool("false neq num num", 123456789 != 123456789, false);
 
-let _ = test_bool("le num num", 123 < 456, true);
-let _ = test_bool("false le num num", 456 < 123, false);
-let _ = test_bool("lt num num", 456 <= 456, true);
+let _ = test_bool("lt num num", 123 < 456, true);
+let _ = test_bool("false lt num num", 456 < 123, false);
+let _ = test_bool("lte num num", 456 <= 456, true);
 let _ = test_bool("false lte num num", 124 <= 123, false);
 let _ = test_bool("gt num num", 456 > 123, true);
 let _ = test_bool("false gt num num", 123 > 456, false);

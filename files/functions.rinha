@@ -11,8 +11,7 @@ let simple = fn () => {
     };
     foo()
 };
-let complex = fn () => {
-    let A = if (true) { 1 } else { "FALSE" };
+let complex = fn (A) => {
     let B = 2;
     let bar = fn () => {
         let A = A + B;
@@ -42,4 +41,4 @@ let simple_anonymous = fn () => {
     }
 };
 
-print(simple_anonymous()())
+print(complex(1))

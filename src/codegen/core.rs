@@ -8,7 +8,17 @@ use inkwell::{
     values::FunctionValue,
 };
 
-use super::value::tuple::build_generic_tuple_type;
+#[derive(Debug, Enum, Clone, Copy)]
+pub enum CoreFunction {
+    PrintStr,
+    PrintInt,
+    PrintBool,
+    FmtInt,
+    FmtBool,
+    // FmtTuple,
+    MemCmp,
+    Panic,
+}
 
 pub struct CoreFunctions<'a, 'ctx> {
     context: &'ctx Context,
@@ -27,7 +37,7 @@ impl<'a, 'ctx> CoreFunctions<'a, 'ctx> {
                 CoreFunction::PrintBool => OnceCell::new(),
                 CoreFunction::FmtInt => OnceCell::new(),
                 CoreFunction::FmtBool => OnceCell::new(),
-                CoreFunction::FmtTuple => OnceCell::new(),
+                // CoreFunction::FmtTuple => OnceCell::new(),
                 CoreFunction::MemCmp => OnceCell::new(),
                 CoreFunction::Panic => OnceCell::new(),
             },
@@ -43,57 +53,34 @@ impl<'a, 'ctx> CoreFunctions<'a, 'ctx> {
     }
 }
 
-#[derive(Debug, Enum, Clone, Copy)]
-pub enum CoreFunction {
-    PrintStr,
-    PrintInt,
-    PrintBool,
-    FmtInt,
-    FmtBool,
-    FmtTuple,
-    MemCmp,
-    Panic,
-}
-
 impl CoreFunction {
     pub fn get_definition<'ctx>(&self, context: &'ctx Context) -> FunctionType<'ctx> {
+        let i8_ptr = context.i8_type().ptr_type(Default::default());
         match self {
-            CoreFunction::PrintStr => context.i32_type().fn_type(
-                &[
-                    context.i8_type().ptr_type(Default::default()).into(),
-                    context.i32_type().into(),
-                ],
-                false,
-            ),
+            CoreFunction::PrintStr => context
+                .i32_type()
+                .fn_type(&[i8_ptr.into(), context.i32_type().into()], false),
             CoreFunction::PrintInt => context
                 .i32_type()
                 .fn_type(&[context.i32_type().into()], false),
             CoreFunction::PrintBool => context
                 .i32_type()
                 .fn_type(&[context.bool_type().into()], false),
-            CoreFunction::FmtInt => context.i32_type().fn_type(
-                &[
-                    context.i8_type().ptr_type(Default::default()).into(),
-                    context.i32_type().into(),
-                ],
-                false,
-            ),
-            CoreFunction::FmtBool => context.i32_type().fn_type(
-                &[
-                    context.i8_type().ptr_type(Default::default()).into(),
-                    context.bool_type().into(),
-                ],
-                false,
-            ),
-            CoreFunction::FmtTuple => context.i32_type().fn_type(
-                &[
-                    context.i8_type().ptr_type(Default::default()).into(),
-                    build_generic_tuple_type(context)
-                        .ptr_type(Default::default())
-                        .into(),
-                ],
-                false,
-            ),
+            CoreFunction::FmtInt => context
+                .i32_type()
+                .fn_type(&[i8_ptr.into(), context.i32_type().into()], false),
+            CoreFunction::FmtBool => context
+                .i32_type()
+                .fn_type(&[i8_ptr.into(), context.bool_type().into()], false),
+            // CoreFunction::FmtTuple => context.i32_type().fn_type(
+            //     &[
+            //         i8_ptr.into(),
+            //         build_generic_tuple_type(context)
+            //             .ptr_type(Default::default())
+            //             .into(),
+            //     ],
+            //     false,
+            // ),
             CoreFunction::MemCmp => context.bool_type().fn_type(
                 &[
                     context.i8_type().ptr_type(Default::default()).into(),
@@ -115,7 +102,7 @@ impl From<CoreFunction> for &'static str {
             CoreFunction::PrintBool => "__rinha_print_bool",
             CoreFunction::FmtInt => "__rinha_fmt_int",
             CoreFunction::FmtBool => "__rinha_fmt_bool",
-            CoreFunction::FmtTuple => "__rinha_fmt_tuple",
+            // CoreFunction::FmtTuple => "__rinha_fmt_tuple",
             CoreFunction::MemCmp => "__rinha_memcmp",
             CoreFunction::Panic => "__rinha_panic",
         }

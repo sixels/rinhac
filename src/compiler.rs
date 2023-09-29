@@ -132,6 +132,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             self.module.print_to_stderr();
             panic!("compilation failed: invalid entry-block code");
         }
+        self.module.print_to_stderr();
 
         Target::initialize_all(&InitializationConfig::default());
 

@@ -283,9 +283,11 @@ impl Codegen for ast::Binary {
                     .context
                     .insert_basic_block_after(current_block, "matchmerge");
 
-                let result_str = compiler
-                    .builder
-                    .build_alloca(compiler.context.i8_type().ptr_type(Default::default()), "");
+                let result_str = compiler.builder.build_array_alloca(
+                    compiler.context.i8_type(),
+                    compiler.context.i32_type().const_int(1024, false),
+                    "",
+                );
                 let result_len = compiler
                     .builder
                     .build_alloca(compiler.context.i32_type(), "");
@@ -304,9 +306,10 @@ impl Codegen for ast::Binary {
                                 };
 
                                 let appended = Str::build_str_append(compiler, l, r);
+
                                 compiler
                                     .builder
-                                    .build_memcpy(result_str, 1, appended.ptr, 1, appended.len)
+                                    .build_memmove(result_str, 1, appended.ptr, 1, appended.len)
                                     .unwrap();
                                 compiler.builder.build_store(result_len, appended.len);
                             }),
@@ -443,30 +446,34 @@ impl Codegen for ast::Binary {
                         (ValueTypeHint::Str, &|compiler, l, else_block| {
                             let Value::Str(l) = l else {unreachable!()};
 
-                            br.build_runtime_match(
-                                compiler,
-                                merge_block,
-                                &[
-                                    (ValueTypeHint::Str, &|compiler, r, _| {
-                                        let Value::Str(r) = r else {unreachable!()};
-                                        let appended =
-                                            Str::build_str_append(compiler, l, r);
-                                        result
-                                            .borrow_mut()
-                                            .build_instance(compiler, appended.into())
-                                    }),
-                                    (ValueTypeHint::Int, &|compiler, r, _| {
-                                        let Value::Primitive(r) = r else {unreachable!()};
-                                        let number_fmt = Str::build_fmt_primitive(compiler, r);
+                            if self.op != ast::BinaryOp::Add {
+                                compiler.builder.build_unconditional_branch(else_block);
+                            } else {
+                                br.build_runtime_match(
+                                    compiler,
+                                    merge_block,
+                                    &[
+                                        (ValueTypeHint::Str, &|compiler, r, _| {
+                                            let Value::Str(r) = r else {unreachable!()};
+                                            let appended =
+                                                Str::build_str_append(compiler, l, r);
+                                            result
+                                                .borrow_mut()
+                                                .build_instance(compiler, appended.into())
+                                        }),
+                                        (ValueTypeHint::Int, &|compiler, r, _| {
+                                            let Value::Primitive(r) = r else {unreachable!()};
+                                            let number_fmt = Str::build_fmt_primitive(compiler, r);
 
-                                        let appended =
-                                            Str::build_str_append(compiler, l, number_fmt);
-                                        result
-                                            .borrow_mut()
-                                            .build_instance(compiler, appended.into())
-                                    }),
-                                ],
-                            );
+                                            let appended =
+                                                Str::build_str_append(compiler, l, number_fmt);
+                                            result
+                                                .borrow_mut()
+                                                .build_instance(compiler, appended.into())
+                                        }),
+                                    ],
+                                );
+                            }
                         })
                     ],
                 );
@@ -504,9 +511,11 @@ impl Codegen for ast::Print {
                     .context
                     .insert_basic_block_after(current_block, "matchmerge");
 
-                let result_str = compiler
-                    .builder
-                    .build_alloca(compiler.context.i8_type().ptr_type(Default::default()), "");
+                let result_str = compiler.builder.build_array_alloca(
+                    compiler.context.i8_type(),
+                    compiler.context.i32_type().const_int(1024, false),
+                    "",
+                );
                 let result_len = compiler
                     .builder
                     .build_alloca(compiler.context.i32_type(), "");
@@ -562,42 +571,7 @@ impl Codegen for ast::Print {
                         .into_int_value(),
                 )
             }
-            Value::Tuple(tup) => {
-                let tup_buf = compiler
-                    .builder
-                    .build_array_malloc(
-                        compiler.context.i8_type(),
-                        compiler.context.i32_type().const_int(50, false),
-                        "",
-                    )
-                    .unwrap();
-
-                let tup_str_len = compiler
-                    .builder
-                    .build_indirect_call(
-                        compiler
-                            .core_functions
-                            .get(CoreFunction::FmtTuple)
-                            .get_type(),
-                        compiler
-                            .core_functions
-                            .get(CoreFunction::FmtTuple)
-                            .as_global_value()
-                            .as_pointer_value(),
-                        &[tup_buf.into(), tup.ptr.into()],
-                        "",
-                    )
-                    .as_any_value_enum()
-                    .into_int_value();
-
-                compiler.builder.build_call(
-                    compiler.core_functions.get(CoreFunction::PrintStr),
-                    &[tup_buf.into(), tup_str_len.into()],
-                    "",
-                );
-
-                Str::new(tup_buf, tup_str_len)
-            }
+            Value::Tuple(tup) => Tuple::fmt(compiler, &tup),
         };
 
         let _ = compiler.builder.build_call(
@@ -663,8 +637,8 @@ impl Codegen for ast::Call {
 
                 cl.build_prepare_function(compiler, &funct.borrow(), Some(&arguments), capt_ty);
 
-                if !cl.funct.verify(false) {
-                    cl.funct.print_to_stderr();
+                if !cl.funct.verify(true) {
+                    compiler.module.print_to_stderr();
                     panic!("invalid function");
                 }
 

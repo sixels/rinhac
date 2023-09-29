@@ -1,7 +1,7 @@
-#![recursion_limit = "9999999999999999999"]
+#![recursion_limit = "1024"]
 
 use std::{
-    io::{self, BufReader, Write},
+    io::{self, Write},
     process::Command,
 };
 

@@ -286,7 +286,7 @@ impl<'ctx> Closure<'ctx> {
             }
         };
 
-        if let Some(captures_type) = self.captures {
+        if self.captures.is_some() {
             let captures_ref = self.funct.get_nth_param(1).unwrap().into_pointer_value();
 
             for (n, capture) in function.captured_variables.iter().enumerate() {

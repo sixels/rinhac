@@ -1,2 +1,3 @@
-let a = (2, 1);
-print(second(a))
+let f = fn (a) => print(a);
+let A = (1, 2);
+f(A)

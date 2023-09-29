@@ -11,12 +11,16 @@ let createTuple = fn (s, n) => {
         if (times == 1) {
             str
         } else {
-            str + repeatedString(str, times - 1)
+            let a = str + repeatedString(str, times - 1);
+            a
         }
     };
     
-    (s, repeatedString(s, n))
+    print(repeatedString(s, n))
 };
 
-let factResult = factorial(14);
- print("calculated fact: " + factResult)
+let factResult = factorial(12);
+let _ = print("calculated fact " + factResult);
+let myTuple = createTuple("yummm memory! ", 10);
+
+print(myTuple)
